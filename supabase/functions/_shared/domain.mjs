@@ -134,6 +134,7 @@ export async function dispatch(state, action, input, ctx) {
       if (!throttle(state, `code:${ctx.client}`, 10, now)) return { error: 'Превышен лимит ввода кода. Повторите через 10 минут.', status: 429 };
       if (await codeHash(input.code, ctx.pepper) !== a.accessHash) return { error: 'Неверное кодовое слово', status: 403 };
       cadet = { fullName: required(input.fullName, 'ФИО', 150), rank: required(input.rank, 'Звание', 80), certificate: required(input.certificate, 'Номер удостоверения', 30), department };
+      if (!/^\d{3}-\d{3}$/.test(cadet.certificate)) fail('Удостоверение должно иметь формат 123-456');
     }
     const pool = a.blocks ? a.blocks.flatMap(b => { const pool = blockPool(state,b); if(pool.length < b.count) fail('Недостаточно вопросов в категории. Обратитесь к администратору.'); return b.mode === 'random' ? shuffle(pool).slice(0,b.count) : pool; }) : shuffle(a.questionIds.map(id => state.questions.find(q => q.id === id)).filter(Boolean)).slice(0,a.questionCount);
     const questions = shuffle(pool).map(q => {
