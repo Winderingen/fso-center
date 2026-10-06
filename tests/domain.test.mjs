@@ -5,7 +5,7 @@ import { seed } from '../supabase/functions/_shared/seed.mjs';
 const pepper = 'test-secret';
 const ctx = { pepper, client: 'test-client', now: 1000000 };
 async function setup() { const state = seed(); state.assessments[1].accessHash = await codeHash('АКАДЕМИЯ', pepper); return state; }
-const examInput = { assessmentId: 'exam-demo', code: 'АКАДЕМИЯ', fullName: 'Иван Иванов', rank: 'Рядовой', certificate: '123_456' };
+const examInput = { assessmentId: 'exam-demo', code: 'АКАДЕМИЯ', fullName: 'Иван Иванов', rank: 'Рядовой', certificate: '123-456' };
 
 test('public catalog and in-progress attempt never expose answer keys or access hash', async () => {
   const state = await setup(); const catalog = await dispatch(state, 'catalog', {}, ctx);
@@ -21,7 +21,7 @@ test('admin operations reject unauthenticated access', async () => {
 test('code validation, certificate and throttling are enforced by the server', async () => {
   const state = await setup();
   assert.equal((await dispatch(state, 'attempt.start', { ...examInput, code: 'wrong' }, ctx)).status, 403);
-  await assert.rejects(dispatch(state, 'attempt.start', { ...examInput, certificate: '123_4567' }, ctx), /123_456/);
+  await assert.rejects(dispatch(state, 'attempt.start', { ...examInput, certificate: '123-4567' }, ctx), /123-456/);
   for (let n = 0; n < 10; n++) await dispatch(state, 'attempt.start', { ...examInput, code: 'wrong' }, ctx);
   assert.equal((await dispatch(state, 'attempt.start', examInput, ctx)).status, 429);
   assert.equal(state.attempts.length, 0);

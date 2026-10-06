@@ -41,13 +41,13 @@ test('HTTP integration: admin CRUD, exam, filtering data and persistence across 
   const generated=await call('admin.generateCode',{},admin);
   const assembled=await call('admin.saveAssessment',{title:'Сохранённая компоновка',type:'exam',blocks:[{categoryId:pictureQuestion.data.categoryId,mode:'random',count:1}],questionCount:1,timeLimit:10,passingScore:70,published:true,departments:['academy'],code:generated.data.code},admin);
   assert.equal(assembled.status,200);
-  const start = await call('attempt.start', { assessmentId: 'exam-demo', code: 'АКАДЕМИЯ', rank: 'Рядовой', fullName: 'Тестовый Курсант', certificate: '111_222' });
+  const start = await call('attempt.start', { assessmentId: 'exam-demo', code: 'АКАДЕМИЯ', rank: 'Рядовой', fullName: 'Тестовый Курсант', certificate: '111-222' });
   assert.equal(start.status, 200);
   const id = start.data.attempt.id, token = start.data.token;
   assert.equal((await call('attempt.answer', { id, token, index: 0, answer: 0 })).status, 200);
   const end = await call('attempt.finish', { id, token }); assert.equal(end.status, 200);
   assert.equal(end.data.attempt.questions, undefined); assert.equal(end.data.attempt.answers, undefined);
-  const summary = await call('admin.data', {}, admin); assert.equal(summary.data.attempts[0].cadet.certificate, '111_222');
+  const summary = await call('admin.data', {}, admin); assert.equal(summary.data.attempts[0].cadet.certificate, '111-222');
   const database = new DatabaseSync(path.join(directory, 'database.sqlite'), { readOnly: true });
   const persisted = JSON.parse(database.prepare('SELECT data FROM fso_state WHERE id=1').get().data);
   database.close(); assert.equal(persisted.attempts.length, 1);
@@ -61,6 +61,6 @@ test('HTTP integration: admin CRUD, exam, filtering data and persistence across 
   const assessment=restored.data.assessments.find(a=>a.id===assembled.data.id);
   assert.equal(assessment.accessCode,generated.data.code);assert.equal(assessment.blocks[0].count,1);
   const safe= catalog.data.assessments.find(a=>a.id===assembled.data.id);assert.equal(safe.accessCode,undefined);assert.equal(safe.blocks,undefined);
-  const composedStart=await call('attempt.start',{assessmentId:assembled.data.id,department:'academy',code:generated.data.code,rank:'Рядовой',fullName:'Проверка компоновки',certificate:'222_333'});
+  const composedStart=await call('attempt.start',{assessmentId:assembled.data.id,department:'academy',code:generated.data.code,rank:'Рядовой',fullName:'Проверка компоновки',certificate:'222-333'});
   assert.equal(composedStart.status,200);assert.equal(composedStart.data.attempt.questions[0].id,pictureQuestion.data.id);
 });
