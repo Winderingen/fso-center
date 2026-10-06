@@ -167,7 +167,7 @@ function start(id) {
   const a = catalog.assessments.find(a => a.id === id);
   let html = `<p class="muted">${e(a.title)} · ${a.timeLimit} мин · ${a.questionCount} вопросов</p>`;
   if (sessionStorage.getItem('fso_attempt')) html += '<div class="note">Новая попытка заменит ссылку на предыдущую в этом браузере. Предыдущая запись останется в системе.</div>';
-  if (a.type === 'exam') html += select('Звание', 'rank', [['', 'Выберите звание'], ...ranks.map(r => [r, r])], '') + field('ФИО игрового персонажа', 'fullName', '', 'text', 'required maxlength="150" autocomplete="off"') + field('Номер удостоверения', 'certificate', '', 'text', 'required pattern="[0-9]{3}_[0-9]{3}" maxlength="7" placeholder="123_456" title="Три цифры, подчёркивание, три цифры"') + field('Кодовое слово', 'code', '', 'password', 'required maxlength="128" autocomplete="off"');
+  if (a.type === 'exam') html += select('Звание', 'rank', [['', 'Выберите звание'], ...ranks.map(r => [r, r])], '') + field('ФИО игрового персонажа', 'fullName', '', 'text', 'required maxlength="150" autocomplete="off"') + field('Номер удостоверения', 'certificate', '', 'text', 'required pattern="[0-9]{3}-[0-9]{3}" maxlength="7" placeholder="123-456" title="Три цифры, дефис, три цифры"') + field('Кодовое слово', 'code', '', 'password', 'required maxlength="128" autocomplete="off"');
   else html += '<p>Тест открыт всем. После завершения вы увидите процент результата.</p>';
   modal(a.type === 'exam' ? 'Допуск к экзамену' : 'Начать тренировочный тест', form(html, 'Начать'));
   onForm(async fd => {
