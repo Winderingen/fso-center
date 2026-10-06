@@ -2,5 +2,5 @@
 window.FSO_CONFIG = {
   mode: 'supabase',
   supabaseUrl: 'https://rnkmfpjzmvdnpijpeayw.supabase.co',
-  publishableKey: 'sbp_fc87ac1b004b06a9f5da7655da77137373bbd481'
+  publishableKey: 'sb_publishable_82R4p_5V-00_fCOkISPhTg_bysBwcr5'
 };
