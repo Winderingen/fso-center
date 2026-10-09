@@ -1,4 +1,6 @@
 .reference-document { margin-bottom: 20px; }
+.article-part { margin: 14px 0 14px 12px; padding: 8px 16px; border-left: 2px solid var(--gold, #c7a56b); }
+.article-part h5 { margin: 0 0 8px; font-size: 15px; color: var(--gold, #c7a56b); }
 .reference-group { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
 .reference-article { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; }
 .reference-article summary { cursor: pointer; padding: 14px; font-weight: 600; }
