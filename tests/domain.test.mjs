@@ -84,7 +84,7 @@ test('structured legislation and charter preserve groups, article fields and ord
     const saved = catalog.materials.find(m => m.id === result.id);
     assert.equal(saved.groups[0].articles[0].num, '1.1'); assert.deepEqual(Object.keys(saved.groups[0].articles[0]).sort(), ['id','num','title','text','important'].sort());
     assert.equal(saved.groups[1].title, 'Глава 2'); assert.ok(saved.groups[0].articles[0].id);
-    await assert.rejects(dispatch(state, 'admin.saveMaterial', { section, title: 'Пустая статья', groups: [{ title: 'Блок', articles: [{ num: '1', title: 'Нет текста' }] }] }, admin), /Краткая расшифровка/);
+    await assert.rejects(dispatch(state, 'admin.saveMaterial', { section, title: 'Пустая статья', published: true, groups: [{ title: 'Блок', articles: [{ num: '1', title: 'Нет текста' }] }] }, admin), /Краткая расшифровка/);
   }
 });
 test('instruction blocks are validated, persisted and unsafe images are rejected', async () => {
@@ -136,7 +136,9 @@ test('matching shuffles definitions, accepts partial pairs, rejects duplicates a
   const start=await dispatch(state,'attempt.start',{assessmentId:a.id},ctx),input={id:start.attempt.id,token:start.token,index:0};
   const snapshot=state.attempts[0].questions[0];
   assert.equal(start.attempt.questions[0].correct,undefined);
-  assert.deepEqual(snapshot.correct.map(i=>snapshot.right[i]),['Три','Один','Два']);
+  const pairs = { А: 'Три', Б: 'Один', В: 'Два' };
+  assert.deepEqual([...snapshot.left].sort(), [...q.left].sort());
+  snapshot.left.forEach((term,i)=>assert.equal(snapshot.right[snapshot.correct[i]],pairs[term]));
   await dispatch(state,'attempt.answer',{...input,answer:[snapshot.correct[0],null,null]},ctx);
   assert.equal(isCorrect(snapshot,state.attempts[0].answers[0]),false);
   await assert.rejects(dispatch(state,'attempt.answer',{...input,answer:[0,0,null]},ctx),/один раз/);

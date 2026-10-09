@@ -81,11 +81,11 @@ export async function dispatch(state, action, input, ctx) {
       const m = { id: str(input.id) || crypto.randomUUID(), section: str(input.section), title: required(input.title, 'Название', 200), body: str(input.body, 50000), published: !!input.published, updatedAt: now };
       if (!['legislation', 'charter', 'instructions', 'structure'].includes(m.section)) fail('Неизвестный раздел');
       if (['legislation', 'charter'].includes(m.section)) {
-        m.groups = list(input.groups || [], 100, 'разделов').map(g => ({ id: str(g.id) || crypto.randomUUID(), title: required(g.title, 'Название раздела', 200), articles: list(g.articles || [], 200, 'статей').map(a => ({ id: str(a.id) || crypto.randomUUID(), num: required(a.num, 'Номер статьи', 80), title: required(a.title, 'Название статьи', 200), text: required(a.text, 'Краткая расшифровка', 20000), important: !!a.important })) }));
+        m.groups = list(input.groups || [], 100, 'разделов').map(g => ({ id: str(g.id) || crypto.randomUUID(), title: m.published ? required(g.title, 'Название раздела', 200) : str(g.title,200), articles: list(g.articles || [], 200, 'статей').map(a => ({ id: str(a.id) || crypto.randomUUID(), num: m.published ? required(a.num, 'Номер статьи', 80) : str(a.num,80), title: m.published ? required(a.title, 'Название статьи', 200) : str(a.title,200), text: m.published ? required(a.text, 'Краткая расшифровка', 20000) : str(a.text,20000), important: !!a.important })) }));
       }
-      if (m.section === 'instructions') m.blocks = list(input.blocks || [], 100, 'блоков инструкции').map(validateBlock);
+      if (m.section === 'instructions') m.blocks = list(input.blocks || [], 100, 'блоков инструкции').map(b=>validateBlock(b,!m.published));
       if (m.section === 'structure' && input.organization) m.organization = validateOrganization(input.organization);
-      if (m.section !== 'legislation' && !m.body && !(m.groups?.length) && !(m.blocks?.length) && !m.organization) fail('Добавьте текст, блоки или статьи');
+      if (m.published && m.section !== 'legislation' && !m.body && !(m.groups?.length) && !(m.blocks?.length) && !m.organization) fail('Добавьте текст, блоки или статьи');
       upsert(state.materials, m); return m;
     }
     if (action === 'admin.saveQuestion') {
@@ -139,7 +139,8 @@ export async function dispatch(state, action, input, ctx) {
     const pool = a.blocks ? a.blocks.flatMap(b => { const pool = blockPool(state,b); if(pool.length < b.count) fail('Недостаточно вопросов в категории. Обратитесь к администратору.'); return b.mode === 'random' ? shuffle(pool).slice(0,b.count) : pool; }) : shuffle(a.questionIds.map(id => state.questions.find(q => q.id === id)).filter(Boolean)).slice(0,a.questionCount);
     const questions = shuffle(pool).map(q => {
       const copy = structuredClone(q);
-      if (q.type === 'matching') { const order = shuffle(q.right.map((_, i) => i)); copy.right = order.map(i => q.right[i]); copy.correct = q.correct.map(i => order.indexOf(i)); }
+      if (q.type === 'matching') { const order = shuffle(q.right.map((_, i) => i)), leftOrder = shuffle(q.left.map((_,i)=>i)); copy.left = leftOrder.map(i=>q.left[i]); copy.right = order.map(i => q.right[i]); copy.correct = leftOrder.map(i => order.indexOf(q.correct[i])); }
+      if (q.type === 'sequence') { const order = shuffle(q.options.map((_,i)=>i)); copy.options = order.map(i=>q.options[i]); copy.correct = q.correct.map(i=>order.indexOf(i)); }
       return copy;
     });
     if (questions.length !== a.questionCount) fail('Недостаточно вопросов. Обратитесь к администратору.');
@@ -162,19 +163,20 @@ export async function dispatch(state, action, input, ctx) {
 }
 function upsert(items, item) { const i = items.findIndex(x => x.id === item.id); if (i < 0) items.push(item); else items[i] = item; }
 function list(value, max, label) { if (!Array.isArray(value) || value.length > max) fail(`Допустимо не более ${max} ${label}`); return value; }
-function validateBlock(b) {
+function validateBlock(b, partial = false) {
+  const content = (value,label,max) => partial ? str(value,max) : required(value,label,max);
   const type = str(b.type);
-  if (['title', 'text', 'warning', 'info', 'danger'].includes(type)) return { type, content: required(b.content, 'Содержание блока', 20000) };
+  if (['title', 'text', 'warning', 'info', 'danger'].includes(type)) return { type, content: content(b.content, 'Содержание блока', 20000) };
   if (['steps', 'list'].includes(type)) {
     const key = type === 'steps' ? 'steps' : 'items';
-    const items = list(b[key] || [], 100, 'пунктов').map(v => required(v, 'Пункт', 2000));
-    if (!items.length) fail('Добавьте пункты списка');
+    const items = list(b[key] || [], 100, 'пунктов').map(v => content(v, 'Пункт', 2000));
+    if (!partial && !items.length) fail('Добавьте пункты списка');
     return { type, title: str(b.title, 200), [key]: items };
   }
   if (type === 'divider') return { type };
   if (type === 'image') {
-    const src = required(b.src, 'Изображение', 700000);
-    if (!/^https:\/\/[^\s]+$/i.test(src) && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(src)) fail('Изображение: используйте HTTPS-ссылку или файл PNG/JPEG/WebP/GIF');
+    const src = content(b.src, 'Изображение', 700000);
+    if ((!partial || src) && !/^https:\/\/[^\s]+$/i.test(src) && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(src)) fail('Изображение: используйте HTTPS-ссылку или файл PNG/JPEG/WebP/GIF');
     return { type, src, alt: str(b.alt, 300) };
   }
   fail('Неизвестный тип блока инструкции');
@@ -182,17 +184,18 @@ function validateBlock(b) {
 export function isCorrect(q, answer) {
   if (answer === null || answer === undefined) return false;
   if (q.type === 'multiple') return Array.isArray(answer) && [...answer].sort((a,b) => a-b).join(',') === [...q.correct].sort((a,b) => a-b).join(',');
-  if (q.type === 'matching') return Array.isArray(answer) && answer.length === q.correct.length && q.correct.every((v,i) => answer[i] === v);
+  if (['matching','sequence'].includes(q.type)) return Array.isArray(answer) && answer.length === q.correct.length && q.correct.every((v,i) => answer[i] === v);
   return answer === q.correct;
 }
 function validateAnswer(q, answer) {
+  if (q.type === 'sequence') { const values = list(answer, q.options.length, 'шагов').map(v => num(v, 0, q.options.length - 1, 'шаг')); if (values.length !== q.options.length || new Set(values).size !== values.length) fail('Укажите каждый шаг ровно один раз'); return values; }
   if (q.type === 'multiple') { const values = list(answer, q.options.length, 'ответов').map(v => num(v, 0, q.options.length - 1, 'ответ')); if (new Set(values).size !== values.length) fail('Варианты не должны повторяться'); return values; }
   if (q.type === 'matching') { const values = list(answer, q.left.length, 'соответствий'); if (values.length !== q.left.length) fail('Неверное число соответствий'); const indices = values.map(v => v === null ? null : num(v, 0, q.right.length - 1, 'соответствие')); const chosen = indices.filter(v => v !== null); if (new Set(chosen).size !== chosen.length) fail('Каждое определение используется один раз'); return indices; }
   return num(answer, 0, q.options.length - 1, 'ответ');
 }
 function validateQuestion(input) {
   const type = input.type || 'single';
-  if (!['single', 'multiple', 'matching'].includes(type)) fail('Неизвестный тип вопроса');
+  if (!['single', 'multiple', 'matching', 'sequence'].includes(type)) fail('Неизвестный тип вопроса');
   const q = { id: str(input.id) || crypto.randomUUID(), type, topic: required(input.topic, 'Тема', 200), text: required(input.text, 'Вопрос', 3000), images: list(input.images || [], 6, 'изображений').map(image => validateBlock({ ...image, type: 'image' })) };
   if (type === 'matching') {
     q.left = list(input.left, 10, 'терминов').map(v => required(v, 'Термин', 1000));
@@ -203,7 +206,7 @@ function validateQuestion(input) {
   } else {
     q.options = list(input.options, 12, 'вариантов').map(v => required(v, 'Вариант ответа', 1000));
     if (q.options.length < 2) fail('Нужно минимум 2 варианта ответа');
-    q.correct = type === 'multiple' ? validateAnswer(q, input.correct) : num(input.correct, 0, q.options.length - 1, 'правильный ответ');
+    q.correct = type === 'sequence' ? q.options.map((_,i)=>i) : type === 'multiple' ? validateAnswer(q, input.correct) : num(input.correct, 0, q.options.length - 1, 'правильный ответ');
     if (type === 'multiple' && !q.correct.length) fail('Отметьте правильные варианты');
   }
   return q;

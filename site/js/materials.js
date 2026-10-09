@@ -28,6 +28,7 @@ function renderBlock(b) {
 }
 
 export function mountMaterialEditor(container, original, save, focus={}) {
+  if(focus.action?.startsWith('reference-')) return mountReferenceEditor(container, original, save, focus);
   let draft = structuredClone({ ...original, groups: original.groups || [], blocks: original.blocks || [], organization: original.organization || defaultOrganization() });
   if(focus.action==='reference-add-group') { const group={id:crypto.randomUUID(),title:'',articles:[]};draft.groups.push(group);focus.groupId=group.id; }
   if(focus.action==='reference-add-article') { const group=draft.groups.find(g=>g.id===focus.groupId);if(group){const a={id:crypto.randomUUID(),num:'',title:'',text:'',important:false};group.articles.push(a);focus.articleId=a.id;} }
@@ -51,12 +52,12 @@ export function mountMaterialEditor(container, original, save, focus={}) {
     collectOrganization(container, draft.organization);
   }
   function render() {
-    container.innerHTML = `<form class="trial-form material-editor"><div data-base>${field('Название документа / инструкции', 'title', draft.title, false, true)}<label>Раздел<select data-key="section">${Object.entries(sections).map(([id, text]) => `<option value="${id}" ${draft.section === id ? 'selected' : ''}>${text}</option>`).join('')}</select></label>${field('Описание / вступление', 'body', draft.body, true)}<label class="check"><input type="checkbox" data-key="published" ${draft.published ? 'checked' : ''}>Опубликовать</label></div><div id="materialEditorContent">${['legislation', 'charter'].includes(draft.section) ? renderGroups() : draft.section === 'instructions' ? renderBlocks() : organizationEditor(draft.organization)}</div><p class="error-message" role="alert"></p><button class="btn btn-primary" type="submit">Сохранить материал</button></form>`;
+    container.innerHTML = `<form class="trial-form material-editor"><div data-base>${field('Название документа / инструкции', 'title', draft.title, false, true)}<label>Раздел<select data-key="section">${Object.entries(sections).map(([id, text]) => `<option value="${id}" ${draft.section === id ? 'selected' : ''}>${text}</option>`).join('')}</select></label>${field('Описание / вступление', 'body', draft.body, true)}<label class="check"><input type="checkbox" data-key="published" ${draft.published ? 'checked' : ''}>Опубликовать</label></div><div id="materialEditorContent">${['legislation', 'charter'].includes(draft.section) ? renderGroups() : draft.section === 'instructions' ? renderBlocks() : organizationEditor(draft.organization)}</div><p class="error-message" role="alert"></p><div class="actions"><button class="btn btn-primary" type="submit">Сохранить материал</button><button class="btn btn-outline" type="submit" name="draft" formnovalidate>Сохранить черновик</button></div></form>`;
     container.querySelector('[data-key=section]').addEventListener('change', () => { collect(); render(); });
     container.querySelector('[data-key=section]').disabled=true;
     container.querySelector('[data-base] > label').firstChild.textContent=draft.section==='legislation'?'Название кодекса':'Название материала';
     container.querySelector('form').addEventListener('submit', async event => {
-      event.preventDefault(); collect(); const btn = event.submitter; btn.disabled = true;
+      event.preventDefault(); collect(); if(event.submitter?.name==='draft')draft.published=false; const btn = event.submitter; btn.disabled = true;
       try { await save(draft); } catch (error) { const node = container.querySelector('.error-message'); if (node) node.textContent = error.message; }
       finally { btn.disabled = false; }
     });
@@ -83,6 +84,11 @@ export function mountMaterialEditor(container, original, save, focus={}) {
   }
   function edit({ edit: action, index, group }) {
     collect();
+    if (action === 'group-add' || action === 'article-add') {
+      const focus = { action: action === 'group-add' ? 'reference-add-group' : 'reference-add-article', groupId: draft.groups[Number(group)]?.id };
+      mountReferenceEditor(container, draft, async updated => { draft = updated; render(); }, focus, () => render());
+      return;
+    }
     if (action === 'group-add') draft.groups.push({ id: crypto.randomUUID(), title: '', description: '', articles: [] });
     else if (action === 'article-add') draft.groups[Number(group)].articles.push({ id: crypto.randomUUID(), num: '', title: '', text: '', tags: [] });
     else if (action === 'block-add') draft.blocks.push({ type: index, content: '', title: '', steps: [''], items: [''], src: '', alt: '' });
@@ -98,4 +104,28 @@ export function mountMaterialEditor(container, original, save, focus={}) {
   }
   render();
   if(focus.groupId){ const gi=draft.groups.findIndex(g=>g.id===focus.groupId),group=container.querySelector(`[data-group-card="${gi}"]`);const ai=draft.groups[gi]?.articles.findIndex(a=>a.id===focus.articleId);const target=ai>=0?group?.querySelector(`[data-article-card="${ai}"]`):group;target?.scrollIntoView({block:'start'});target?.querySelector('input')?.focus(); }
+}
+
+function mountReferenceEditor(container, original, save, focus, cancel) {
+  const draft = structuredClone(original);
+  draft.groups ||= [];
+  const addingGroup = focus.action === 'reference-add-group';
+  const isGroup = addingGroup || focus.action === 'reference-group';
+  let group = draft.groups.find(g => g.id === focus.groupId);
+  if (addingGroup) { group = { id: crypto.randomUUID(), title: '', articles: [] }; draft.groups.push(group); }
+  if (!group) throw new Error('Раздел не найден. Обновите справочник.');
+  let article = group.articles.find(a => a.id === focus.articleId);
+  if (focus.action === 'reference-add-article') { article = { id: crypto.randomUUID(), num: '', title: '', text: '', important: false }; group.articles.push(article); }
+  if (!isGroup && !article) throw new Error('Статья не найдена. Обновите справочник.');
+  const required = !!draft.published;
+  container.innerHTML = `<form class="trial-form"><p class="muted">${isGroup ? 'Раздел кодекса / устава' : `Раздел: ${esc(group.title || 'Без названия')}`}</p>${isGroup ? field('Название раздела', 'title', group.title, false, true) : field('Номер статьи', 'num', article.num, false, required) + field('Название статьи', 'title', article.title, false, required) + field('Краткая расшифровка', 'text', article.text, true, required) + (draft.section === 'legislation' ? `<label class="check"><input data-key="important" type="checkbox" ${article.important ? 'checked' : ''}>Важная для ФСО статья</label>` : '')}<p class="error-message" role="alert"></p><div class="actions"><button class="btn btn-primary" type="submit">${cancel ? 'Применить' : isGroup ? 'Сохранить раздел' : 'Сохранить статью'}</button>${cancel ? '<button class="btn btn-outline" type="button" data-reference-cancel>Назад к документу</button>' : ''}</div></form>`;
+  container.querySelector('[data-reference-cancel]')?.addEventListener('click', cancel);
+  container.querySelector('form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const target = isGroup ? group : article;
+    container.querySelectorAll('[data-key]').forEach(input => target[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value);
+    event.submitter.disabled = true;
+    try { await save(draft); } catch(error) { container.querySelector('.error-message').textContent = error.message; } finally { event.submitter.disabled = false; }
+  });
+  container.querySelector('input')?.focus();
 }

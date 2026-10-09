@@ -15,9 +15,11 @@ const heading = (title, description = '') => `<h2>${title}</h2><p class="subtitl
 const date = value => new Date(value).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
 const status = a => a.status === 'in_progress' ? 'В процессе' : `${a.passed ? 'Сдано' : 'Не сдано'}${a.status === 'expired' ? ' · время истекло' : ''}`;
 function toast(message) { const node = document.createElement('div'); node.className = 'toast'; node.textContent = message; $('#notifications').append(node); setTimeout(() => node.remove(), 5500); }
-function closeModal() { $('#modalOverlay').classList.remove('show'); modalReturnFocus?.focus(); }
+let modalDirty = false;
+function requestCloseModal() { if (!modalDirty || confirm("Закрыть окно без сохранения изменений?")) closeModal(); }
+function closeModal() { modalDirty = false; $('#modalOverlay').classList.remove('show'); modalReturnFocus?.focus(); }
 function modal(title, html) {
-  modalReturnFocus = document.activeElement;
+  modalDirty = false; modalReturnFocus = document.activeElement;
   $('#modalTitle').textContent = title; $('#modalBody').innerHTML = html; $('#modalOverlay').classList.add('show');
   $('#modalBody').querySelector('input, textarea, select, button')?.focus();
 }
@@ -137,7 +139,8 @@ function exportResults() {
 async function saved(action, input) { await api(action, input); closeModal(); await refreshCatalog(); await route(); toast('Изменения сохранены'); }
 function editMaterial(id, section=materialCategory, focus={}) {
   const m = adminData.materials.find(m => m.id === id) || { section, published: false };
-  modal(id ? 'Редактирование материала' : 'Новый материал', '<div></div>');
+  const editorTitle = focus.action ? (focus.action.includes('article') ? 'Статья' : 'Раздел') : id ? 'Редактирование материала' : 'Новый материал';
+  modal(editorTitle, '<div></div>');
   mountMaterialEditor($('#modalBody'), m, draft => saved('admin.saveMaterial', draft),focus);
   if(!focus.groupId)$('#modalBody input')?.focus();
 }
@@ -187,7 +190,7 @@ function renderAttempt() {
   questionIndex = Math.min(questionIndex, attempt.questions.length - 1);
   const q = attempt.questions[questionIndex];
   content.innerHTML = `<div class="quiz-top"><div>${heading(e(attempt.title), `Вопрос ${questionIndex + 1} из ${attempt.questions.length}`)}</div><div class="clock" id="quizClock" aria-label="Осталось времени"></div></div><p class="muted">${attempt.cadet ? `${e(attempt.cadet.rank)} · ${e(attempt.cadet.fullName)} · ${e(attempt.cadet.certificate)}` : 'Общедоступный тест'} · ответы сохраняются после выбора.</p><div class="question-nav">${attempt.questions.map((question, i) => `<button class="${i === questionIndex ? 'active' : ''} ${answerComplete(question,attempt.answers[i]) ? 'answered' : ''}" data-action="question" data-id="${i}" aria-label="Вопрос ${i + 1}">${i + 1}</button>`).join('')}</div><article class="trial-card"><h3>${e(q.text)}</h3>${renderQuestion(q,attempt.answers[questionIndex])}</article><div class="actions" style="margin-top:20px">${questionIndex > 0 ? button('← Назад', 'question', questionIndex - 1) : ''}${questionIndex < attempt.questions.length - 1 ? button('Следующий вопрос →', 'question', questionIndex + 1, 'btn-primary') : ''}${button('Завершить проверку', 'finish', '', 'btn-gold')}</div><p class="muted" style="margin-top:16px">Можно обновить страницу: попытка и сохранённые ответы восстановятся. Таймер продолжит отсчёт.</p>`;
-  if (q.type === 'matching') bindMatching(content,q,attempt.answers[questionIndex],value=>saveAnswer(value).catch(err=>toast(err.message)));
+  if (['matching','sequence'].includes(q.type)) bindMatching(content,q,attempt.answers[questionIndex],value=>saveAnswer(value).catch(err=>toast(err.message)));
   let expiryRequested = false;
   const tick = () => {
     const seconds = Math.max(0, Math.ceil((attempt.deadline - Date.now() - offset) / 1000));
@@ -202,9 +205,10 @@ async function finishAttempt() {
 }
 async function saveAnswer(value) {
   if(busy)return;busy=true;
-  document.querySelectorAll('.answer-option, [data-match-select]').forEach(node=>node.disabled=true);
+  const controls = [...document.querySelectorAll('.answer-option, [data-match-select], [data-sequence-action]')].map(node=>({node,disabled:node.disabled}));
+  controls.forEach(({node})=>node.disabled=true);
   try{acceptAttempt(await api('attempt.answer',{id:attempt.id,token:attemptToken,index:questionIndex,answer:value}));if(currentRoute()==='attempt')renderAttempt();}
-  finally{busy=false;document.querySelectorAll('.answer-option, [data-match-select]').forEach(node=>node.disabled=false);}
+  finally{busy=false;controls.forEach(({node,disabled})=>node.disabled=disabled);}
 }
 async function handle(action, id) {
   if (action === 'reload') { catalog = null; await route(); }
@@ -234,11 +238,15 @@ async function handle(action, id) {
   }
 }
 document.addEventListener('click', event => { const b = event.target.closest('[data-action]'); if (b) handle(b.dataset.action, b.dataset.id).catch(error => toast(error.message)); });
-$('#modalClose').addEventListener('click', closeModal);
-$('#modalOverlay').addEventListener('click', event => { if (event.target === $('#modalOverlay')) closeModal(); });
+$('#modalClose').addEventListener('click', requestCloseModal);
+$('#modalBody').addEventListener('input', () => modalDirty = true);
+$('#modalBody').addEventListener('change', () => modalDirty = true);
+$('#modalBody').addEventListener('click', event => { if (event.target.closest('form button[type=button]')) modalDirty = true; });
+window.addEventListener('beforeunload', event => { if (modalDirty && $('#modalOverlay').classList.contains('show')) { event.preventDefault(); event.returnValue = ''; } });
+// Editors close only through their explicit controls, never through the backdrop.
 document.addEventListener('keydown', event => {
   if (!$('#modalOverlay').classList.contains('show')) return;
-  if (event.key === 'Escape') closeModal();
+  if (event.key === 'Escape') { event.preventDefault(); if (!$('#modalBody form')) requestCloseModal(); }
   if (event.key === 'Tab') {
     const nodes = [...$('#modalOverlay').querySelectorAll('button, input, select, textarea, a[href]')].filter(n => !n.disabled && n.getClientRects().length);
     const first = nodes[0], last = nodes.at(-1);
