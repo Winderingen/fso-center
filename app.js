@@ -1,66 +1,44 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
-import os from 'node:os';
-import path from 'node:path';
-import { once } from 'node:events';
-
-test('HTTP integration: admin CRUD, exam, filtering data and persistence across restart', async t => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'fso-test-'));
-  let child;
-  t.after(async () => { if (child && child.exitCode === null) { child.kill(); await once(child, 'exit'); } await rm(directory, { recursive: true, force: true }); });
-  async function startServer() {
-    child = spawn(process.execPath, ['server.mjs'], { env: { ...process.env, PORT: '0', FSO_DATA_DIR: directory, FSO_ADMIN_LOGIN: 'tester', FSO_ADMIN_PASSWORD: 'test-password' }, stdio: ['ignore', 'pipe', 'pipe'] });
-    let output = '';
-    const url = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Server startup timed out')), 10000);
-      child.stdout.on('data', chunk => { output += chunk; const match = output.match(/http:\/\/127\.0\.0\.1:\d+/); if (match) { clearTimeout(timeout); resolve(match[0]); } });
-      child.once('error', error => { clearTimeout(timeout); reject(error); });
-      child.once('exit', code => { clearTimeout(timeout); reject(new Error(`Server exited ${code}`)); });
-    }); return url;
-  }
-  let base = await startServer();
-  const call = async (action, input = {}, token = '') => {
-    const res = await fetch(base + '/api', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify({ action, input }) });
-    return { status: res.status, data: await res.json() };
-  };
-  assert.equal((await fetch(base)).status, 200);
-  assert.equal((await fetch(base + '/js/app.js')).status, 200);
-  assert.equal((await fetch(base + '/.runtime/database.json')).status, 404);
-  assert.equal((await call('admin.data')).status, 401);
-  assert.equal((await call('auth.login', { username: 'tester', password: 'wrong' })).status, 401);
-  const login = await call('auth.login', { username: 'tester', password: 'test-password' }); assert.equal(login.status, 200);
-  const admin = login.data.token;
-  const material = await call('admin.saveMaterial', { title: 'Интеграционный материал', body: 'Текст', section: 'instructions', published: true }, admin);
-  assert.equal(material.status, 200);
-  const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY2kAAAAASUVORK5CYII=';
-  const pictureQuestion=await call('admin.saveQuestion',{topic:'Картинки',type:'multiple',text:'С картинкой',options:['А','Б'],correct:[0],images:[{src:image,alt:'Схема'}]},admin);
-  assert.equal(pictureQuestion.status,200);
-  const generated=await call('admin.generateCode',{},admin);
-  const assembled=await call('admin.saveAssessment',{title:'Сохранённая компоновка',type:'exam',blocks:[{categoryId:pictureQuestion.data.categoryId,mode:'random',count:1}],questionCount:1,timeLimit:10,passingScore:70,published:true,departments:['academy'],code:generated.data.code},admin);
-  assert.equal(assembled.status,200);
-  const start = await call('attempt.start', { assessmentId: 'exam-demo', code: 'АКАДЕМИЯ', rank: 'Рядовой', fullName: 'Тестовый Курсант', certificate: '111-222' });
-  assert.equal(start.status, 200);
-  const id = start.data.attempt.id, token = start.data.token;
-  assert.equal((await call('attempt.answer', { id, token, index: 0, answer: 0 })).status, 200);
-  const end = await call('attempt.finish', { id, token }); assert.equal(end.status, 200);
-  assert.equal(end.data.attempt.questions, undefined); assert.equal(end.data.attempt.answers, undefined);
-  const summary = await call('admin.data', {}, admin); assert.equal(summary.data.attempts[0].cadet.certificate, '111-222');
-  const database = new DatabaseSync(path.join(directory, 'database.sqlite'), { readOnly: true });
-  const persisted = JSON.parse(database.prepare('SELECT data FROM fso_state WHERE id=1').get().data);
-  database.close(); assert.equal(persisted.attempts.length, 1);
-  child.kill(); await once(child, 'exit'); base = await startServer();
-  const resumed = await call('attempt.get', { id, token }); assert.equal(resumed.data.attempt.status, 'completed');
-  const catalog = await call('catalog'); assert.ok(catalog.data.materials.some(m => m.id === material.data.id));
-  assert.equal((await call('admin.data', {}, admin)).status, 401);
-  const newLogin=await call('auth.login',{username:'tester',password:'test-password'});
-  const restored=await call('admin.data',{},newLogin.data.token);
-  assert.equal(restored.data.questions.find(q=>q.id===pictureQuestion.data.id).images[0].src,image);
-  const assessment=restored.data.assessments.find(a=>a.id===assembled.data.id);
-  assert.equal(assessment.accessCode,generated.data.code);assert.equal(assessment.blocks[0].count,1);
-  const safe= catalog.data.assessments.find(a=>a.id===assembled.data.id);assert.equal(safe.accessCode,undefined);assert.equal(safe.blocks,undefined);
-  const composedStart=await call('attempt.start',{assessmentId:assembled.data.id,department:'academy',code:generated.data.code,rank:'Рядовой',fullName:'Проверка компоновки',certificate:'222-333'});
-  assert.equal(composedStart.status,200);assert.equal(composedStart.data.attempt.questions[0].id,pictureQuestion.data.id);
-});
+.reference-group > summary { cursor: pointer; font-weight: 600; color: var(--gold-light); font-size: 18px; padding: 8px 0; }
+.compact-article { padding: 16px; }
+.compact-article h4 { color: var(--text-bright); }
+.department-card { color: inherit; text-decoration: none; transition: border-color .2s; }
+.department-card:hover { border-color: var(--gold); }
+.department-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.department-card .card-number { font-weight: 700; }
+.question-images { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.question-images figure { max-width: min(100%, 400px); }
+.question-images img { max-width: 100%; max-height: 350px; border-radius: 8px; object-fit: contain; }
+.option-editor-row { display: grid; grid-template-columns: 24px minmax(0,1fr) auto; align-items: center; gap: 12px; }
+.matching-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 18px; }
+.match-target { border: 1px solid var(--border); background: #112033; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.match-target label { display: grid; gap: 12px; }
+.match-target.drag-over { border-color: var(--gold); background: #293e52; }
+.match-source { border: 1px solid var(--border); border-radius: 8px; background: #1b2c40; padding: 16px; margin-bottom: 12px; cursor: grab; user-select: none; }
+.match-source:active { cursor: grabbing; }
+.match-source.assigned { border-color: #3b8d75; }
+.modal:has(.question-editor) { max-width: 950px; width: min(950px,96vw); }
+.org-tree { margin-top: 24px; }
+.org-person { padding: 16px; background: var(--surface-light); border: 1px solid var(--border); border-radius: 8px; margin: 14px 0; }
+.org-person p { margin: 6px 0; }
+.org-person .eyebrow { color: var(--gold); }
+.org-rank { color: var(--blue-light); font-weight: 600; }
+.org-director { max-width: 500px; margin: auto; text-align: center; }
+.org-director .org-person { border-color: var(--gold-dim); }
+.org-connector { width: 1px; height: 24px; background: var(--gold-dim); margin: auto; }
+.org-departments { border-top: 1px solid var(--gold-dim); display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 20px; padding-top: 24px; }
+.org-division { padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.org-division h3 { margin-top: 0; }
+.org-deputies { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 10px; }
+.org-deputies .org-person { border-left: 3px solid var(--gold-dim); }
+.org-subdivisions { display: grid; gap: 12px; }
+.org-subdivision { padding: 12px; }
+.org-ranks { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+[hidden] { display: none !important; }
+.code-tabs { margin-top: 24px; flex-wrap: wrap; }
+.pinned-articles { margin: 24px 0; border: 1px solid var(--gold-dim); border-radius: 10px; padding: 16px; }
+.pinned-articles > h3 { color: var(--gold-light); }
+.reference-article > .btn { margin-top: 12px; }
+.reference-group > .actions { margin: 12px 0; }
+.composition-editor fieldset { border: 1px solid var(--border); padding: 16px; border-radius: 8px; }
+input[readonly] { opacity: .8; }
+@media(max-width: 650px) { .matching-grid, .department-grid { grid-template-columns: 1fr; } .option-editor-row { grid-template-columns: 22px minmax(0,1fr); } .option-editor-row > button { grid-column: 2; justify-self: start; } .org-departments { grid-template-columns: 1fr; } }

@@ -1,155 +1,32 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { dispatch, codeHash, isCorrect } from '../supabase/functions/_shared/domain.mjs';
-import { seed } from '../supabase/functions/_shared/seed.mjs';
-const pepper = 'test-secret';
-const ctx = { pepper, client: 'test-client', now: 1000000 };
-async function setup() { const state = seed(); state.assessments[1].accessHash = await codeHash('АКАДЕМИЯ', pepper); return state; }
-const examInput = { assessmentId: 'exam-demo', code: 'АКАДЕМИЯ', fullName: 'Иван Иванов', rank: 'Рядовой', certificate: '123-456' };
-
-test('public catalog and in-progress attempt never expose answer keys or access hash', async () => {
-  const state = await setup(); const catalog = await dispatch(state, 'catalog', {}, ctx);
-  assert.ok(catalog.assessments.every(a => !('accessHash' in a) && a.questionIds === undefined));
-  const start = await dispatch(state, 'attempt.start', examInput, ctx);
-  assert.ok(start.attempt.questions.every(q => !('correct' in q) && !('explanation' in q)));
-  assert.equal(start.attempt.tokenHash, undefined);
-});
-test('admin operations reject unauthenticated access', async () => {
-  const state = await setup();
-  for (const action of ['admin.data', 'admin.saveQuestion', 'admin.delete']) await assert.rejects(dispatch(state, action, {}, ctx), e => e.status === 401);
-});
-test('code validation, certificate and throttling are enforced by the server', async () => {
-  const state = await setup();
-  assert.equal((await dispatch(state, 'attempt.start', { ...examInput, code: 'wrong' }, ctx)).status, 403);
-  await assert.rejects(dispatch(state, 'attempt.start', { ...examInput, certificate: '123-4567' }, ctx), /123-456/);
-  for (let n = 0; n < 10; n++) await dispatch(state, 'attempt.start', { ...examInput, code: 'wrong' }, ctx);
-  assert.equal((await dispatch(state, 'attempt.start', examInput, ctx)).status, 429);
-  assert.equal(state.attempts.length, 0);
-});
-test('tokens protect attempts; server computes score and completion is idempotent', async () => {
-  const state = await setup(); const { attempt, token } = await dispatch(state, 'attempt.start', examInput, ctx);
-  await assert.rejects(dispatch(state, 'attempt.get', { id: attempt.id, token: 'wrong' }, ctx), e => e.status === 404);
-  const privateAttempt = state.attempts[0];
-  for (let i = 0; i < privateAttempt.questions.length; i++) await dispatch(state, 'attempt.answer', { id: attempt.id, token, index: i, answer: privateAttempt.questions[i].correct }, ctx);
-  const result = await dispatch(state, 'attempt.finish', { id: attempt.id, token, score: 0 }, { ...ctx, now: ctx.now + 12000 });
-  assert.equal(result.attempt.score, 100); assert.equal(privateAttempt.passed, true); assert.equal(privateAttempt.timeSpent, 12);
-  await dispatch(state, 'attempt.answer', { id: attempt.id, token, index: 0, answer: 0 }, ctx);
-  const again = await dispatch(state, 'attempt.finish', { id: attempt.id, token }, ctx);
-  assert.equal(again.attempt.score, 100); assert.equal(state.attempts.length, 1);
-});
-test('time limit is authoritative and abandoned attempts expire', async () => {
-  const state = await setup(); const result = await dispatch(state, 'attempt.start', examInput, ctx);
-  const after = { ...ctx, now: result.attempt.deadline + 999999 };
-  await dispatch(state, 'catalog', {}, after);
-  const finished = await dispatch(state, 'attempt.answer', { id: result.attempt.id, token: result.token, index: 0, answer: 0 }, after);
-  assert.equal(finished.attempt.status, 'expired'); assert.equal(finished.attempt.score, 0); assert.equal(state.attempts[0].timeSpent, 600);
-});
-test('editing or deleting a question cannot alter historical attempt snapshots', async () => {
-  const state = await setup(); await dispatch(state, 'attempt.start', examInput, ctx);
-  const snapshot = structuredClone(state.attempts[0].questions);
-  await dispatch(state, 'admin.saveQuestion', { ...state.questions[0], text: 'Изменённый вопрос' }, { ...ctx, admin: true });
-  assert.deepEqual(state.attempts[0].questions, snapshot);
-  await assert.rejects(dispatch(state, 'admin.delete', { collection: 'questions', id: 'q1' }, { ...ctx, admin: true }), /используется/);
-});
-test('public practice is saved without employee identity', async () => {
-  const state = await setup(); const start = await dispatch(state, 'attempt.start', { assessmentId: 'practice-demo' }, ctx);
-  assert.equal(start.attempt.cadet, null); assert.equal(start.attempt.type, 'test');
-  const end = await dispatch(state, 'attempt.finish', { id: start.attempt.id, token: start.token }, ctx);
-  assert.equal(end.attempt.questions, undefined);
-});
-
-test('completed public results expose only score; full answers stay admin-only for exams and tests', async () => {
-  for (const type of ['exam', 'test']) {
-    const state = await setup();
-    const start = await dispatch(state, 'attempt.start', type === 'exam' ? examInput : { assessmentId: 'practice-demo' }, ctx);
-    const credentials = { id: start.attempt.id, token: start.token };
-    for (const action of ['attempt.finish', 'attempt.get', 'attempt.answer']) {
-      const result = await dispatch(state, action, { ...credentials, index: 0, answer: 0 }, ctx);
-      assert.deepEqual(Object.keys(result.attempt).sort(), ['id', 'title', 'type', 'status', 'score'].sort());
-      assert.equal(result.attempt.questions, undefined); assert.equal(result.attempt.answers, undefined);
-    }
-    const admin = await dispatch(state, 'admin.data', {}, { ...ctx, admin: true });
-    assert.equal(admin.attempts[0].answers.length, 3);
-    assert.ok(admin.attempts[0].questions.every(q => Number.isInteger(q.correct) && q.explanation === undefined));
-  }
-});
-test('structured legislation and charter preserve groups, article fields and order', async () => {
-  const state = await setup(), admin = { ...ctx, admin: true };
-  for (const section of ['legislation', 'charter']) {
-    const result = await dispatch(state, 'admin.saveMaterial', {
-      section, title: 'Документ', published: true,
-      groups: [{ title: 'Общие положения', articles: [{ num: '1.1', title: 'Статья', text: 'Текст', part2: 'Часть 2', hint: 'Примечание', severity: 'Норма', penalty: 'Штраф', tags: ['служба'], isFsoMain: true }] }, { title: 'Глава 2', articles: [] }]
-    }, admin);
-    const catalog = await dispatch(state, 'catalog', {}, ctx);
-    const saved = catalog.materials.find(m => m.id === result.id);
-    assert.equal(saved.groups[0].articles[0].num, '1.1'); assert.deepEqual(Object.keys(saved.groups[0].articles[0]).sort(), ['id','num','title','text','important'].sort());
-    assert.equal(saved.groups[1].title, 'Глава 2'); assert.ok(saved.groups[0].articles[0].id);
-    await assert.rejects(dispatch(state, 'admin.saveMaterial', { section, title: 'Пустая статья', published: true, groups: [{ title: 'Блок', articles: [{ num: '1', title: 'Нет текста' }] }] }, admin), /Краткая расшифровка/);
-  }
-});
-test('instruction blocks are validated, persisted and unsafe images are rejected', async () => {
-  const state = await setup(), admin = { ...ctx, admin: true };
-  const blocks = [{ type: 'title', content: 'Инструкция' }, { type: 'text', content: 'Текст' }, { type: 'steps', title: 'Порядок', steps: ['Первый', 'Второй'] }, { type: 'list', items: ['А', 'Б'] }, { type: 'warning', content: 'Внимание' }, { type: 'info', content: 'Справка' }, { type: 'danger', content: 'Опасно' }, { type: 'image', src: 'https://example.com/image.png', alt: 'Схема' }, { type: 'divider' }];
-  const m = await dispatch(state, 'admin.saveMaterial', { section: 'instructions', title: 'Инструкция', blocks, published: true }, admin);
-  assert.deepEqual(m.blocks, [{ type: 'title', content: 'Инструкция' }, { type: 'text', content: 'Текст' }, { type: 'steps', title: 'Порядок', steps: ['Первый', 'Второй'] }, { type: 'list', title: '', items: ['А', 'Б'] }, ...blocks.slice(4)]);
-  for (const src of ['javascript:alert(1)', 'data:image/svg+xml;base64,AAAA', 'file:///etc/passwd']) await assert.rejects(dispatch(state, 'admin.saveMaterial', { section: 'instructions', title: 'Bad', blocks: [{ type: 'image', src }] }, admin), /HTTPS/);
-  assert.equal((await dispatch(state, 'catalog', {}, ctx)).materials.find(x => x.id === m.id).blocks.length, 9);
-  // Legacy plain-text records remain valid and visible.
-  assert.ok((await dispatch(state, 'catalog', {}, ctx)).materials.some(x => x.id === 'welcome' && x.body));
-});
-test('admin can create materials, questions and coded exams; hashes are never returned', async () => {
-  const state = await setup(), admin = { ...ctx, admin: true };
-  const material = await dispatch(state, 'admin.saveMaterial', { section: 'instructions', title: 'Пост', body: '<script>example</script>', published: false }, admin);
-  const q = await dispatch(state, 'admin.saveQuestion', { topic: 'Пост', text: 'Вопрос?', options: ['Да', 'Нет'], correct: 0 }, admin);
-  const a = await dispatch(state, 'admin.saveAssessment', { type: 'exam', title: 'Новый', questionIds: [q.id], questionCount: 1, timeLimit: 5, passingScore: 80, code: 'SECRET777', published: true }, admin);
-  const data = await dispatch(state, 'admin.data', {}, admin);
-  assert.equal(data.assessments.find(item => item.id === a.id).accessHash, undefined);
-  assert.equal(data.assessments.find(item => item.id === a.id).hasCode, true);
-  assert.ok(!(await dispatch(state, 'catalog', {}, ctx)).materials.some(m => m.id === material.id));
-});
-
-test('department restrictions are enforced on the server and legacy exams allow all four', async () => {
-  const state = await setup(), admin = { ...ctx, admin: true };
-  const assessment = await dispatch(state, 'admin.saveAssessment', { type: 'exam', title: 'СБП и АС', departments: ['sbp','as'], questionIds: ['q1'], questionCount: 1, timeLimit: 5, passingScore: 70, code: 'SECRET777', published: true }, admin);
-  const input = { ...examInput, assessmentId: assessment.id, code: 'SECRET777' };
-  for (const department of ['academy','kmk','unknown','']) await assert.rejects(dispatch(state,'attempt.start',{...input,department},ctx),err=>err.status===403);
-  const start=await dispatch(state,'attempt.start',{...input,department:'sbp'},ctx);
-  assert.equal(start.attempt.cadet.department,'sbp');
-  assert.deepEqual((await dispatch(state,'catalog',{},ctx)).assessments.find(a=>a.id==='exam-demo').departments,['sbp','as','academy','kmk']);
-  await assert.rejects(dispatch(state,'admin.saveAssessment',{...state.assessments.find(a=>a.id===assessment.id),departments:[]},admin),/отдел/);
-});
-test('multiple-choice scoring requires the full correct set and rejects duplicate or invalid answers', async () => {
-  const state=await setup(),admin={...ctx,admin:true};
-  const q=await dispatch(state,'admin.saveQuestion',{type:'multiple',topic:'Тест',text:'Выберите два',options:['А','Б','В'],correct:[0,2]},admin);
-  assert.equal(isCorrect(q,[2,0]),true);assert.equal(isCorrect(q,[0]),false);assert.equal(isCorrect(q,[0,1,2]),false);
-  const a=await dispatch(state,'admin.saveAssessment',{type:'test',title:'Множественный',questionIds:[q.id],questionCount:1,timeLimit:5,passingScore:100,published:true},admin);
-  const start=await dispatch(state,'attempt.start',{assessmentId:a.id},ctx),input={id:start.attempt.id,token:start.token,index:0};
-  assert.equal(start.attempt.questions[0].correct,undefined);
-  for(const answer of [[0,0],[3],[null]])await assert.rejects(dispatch(state,'attempt.answer',{...input,answer},ctx));
-  await dispatch(state,'attempt.answer',{...input,answer:[2,0]},ctx);
-  assert.equal((await dispatch(state,'attempt.finish',input,ctx)).attempt.score,100);
-});
-test('matching shuffles definitions, accepts partial pairs, rejects duplicates and grades full pairs', async () => {
-  const state=await setup(),admin={...ctx,admin:true};
-  const q=await dispatch(state,'admin.saveQuestion',{type:'matching',topic:'Тест',text:'Сопоставьте',left:['А','Б','В'],right:['Один','Два','Три'],correct:[2,0,1]},admin);
-  const a=await dispatch(state,'admin.saveAssessment',{type:'test',title:'Соответствия',questionIds:[q.id],questionCount:1,timeLimit:5,passingScore:100,published:true},admin);
-  const start=await dispatch(state,'attempt.start',{assessmentId:a.id},ctx),input={id:start.attempt.id,token:start.token,index:0};
-  const snapshot=state.attempts[0].questions[0];
-  assert.equal(start.attempt.questions[0].correct,undefined);
-  const pairs = { А: 'Три', Б: 'Один', В: 'Два' };
-  assert.deepEqual([...snapshot.left].sort(), [...q.left].sort());
-  snapshot.left.forEach((term,i)=>assert.equal(snapshot.right[snapshot.correct[i]],pairs[term]));
-  await dispatch(state,'attempt.answer',{...input,answer:[snapshot.correct[0],null,null]},ctx);
-  assert.equal(isCorrect(snapshot,state.attempts[0].answers[0]),false);
-  await assert.rejects(dispatch(state,'attempt.answer',{...input,answer:[0,0,null]},ctx),/один раз/);
-  await assert.rejects(dispatch(state,'attempt.answer',{...input,answer:[0]},ctx),/число/);
-  await dispatch(state,'attempt.answer',{...input,answer:snapshot.correct},ctx);
-  assert.equal((await dispatch(state,'attempt.finish',input,ctx)).attempt.score,100);
-});
-test('organization saves director, deputies, subdivisions and ranks', async()=>{
-  const state=await setup(),admin={...ctx,admin:true};
-  const organization={director:{title:'Директор',name:'Иван Иванов',rank:'Полковник',duties:'Руководство'},departments:[{name:'Академия',head:{name:'Пётр Петров'},deputies:[{title:'Заместитель',name:'Анна'}],subdivisions:[{name:'Учебный отдел',head:{name:'Игорь'},deputies:[]}]}],ranks:['Рядовой','Полковник']};
-  const saved=await dispatch(state,'admin.saveMaterial',{section:'structure',title:'Структура',organization,published:true},admin);
-  const visible=(await dispatch(state,'catalog',{},ctx)).materials.find(m=>m.id===saved.id).organization;
-  assert.equal(visible.director.name,'Иван Иванов');assert.equal(visible.departments[0].deputies[0].name,'Анна');assert.equal(visible.departments[0].subdivisions[0].head.name,'Игорь');
-});
+ee7d2b773aa8b8c79a5ce5477820a61c7642ec04adf531e123a8adeaafbf1903  .gitignore
+bc3777475dc1bf0679671cc7d2d1473e36895b311c71a4a9ade55cedd9dbc598  package.json
+0cc75fe41337e91c5fc5dc7a151ac62ee8f3c23cdaee25f0e410b5fc12de4886  README.md
+bf83129b19f1f2b1e6edbb05397104e7262c643545e872ad6b34bde91cd4374c  RECOVERY.md
+d5293dcbe5e66a7a0c324f6b8e21e11742a367219dc84882ae8110a373eddc9a  server.mjs
+b083818672778d9a3a541eac639d96d7321c4d8dd946b2225229b7b7de0b7d50  UPDATE-EDITORS.md
+36b0409d805a9d9200a1f09e7598bc10b879b277b5c3278bf3095fca4ebffdd7  .github/workflows/pages.yml
+557e2dd7659a1522be21f78fb8b10b4640ce96a22823e323e557ffbcf97c9527  .github/workflows/recover-api.yml
+32d3ab6b4b895fe6f5d00df6bf3b7e37ce0c07c66b7f6396a5f3ac2e799cd452  scripts/seed-sql.mjs
+ff5b2dda2dc7b948c001eed7db807d2956793a049f5f88d94a41d47ec83eef35  site/index.html
+0e6cedcacf9383478e5352382d5ff51a576c314818defcb4a85edf898b92b5c0  site/assets/emblem.svg
+ba8916cd6713da853b78e9a0175fb6019bebe45594917b2d3a284f16b21b298b  site/assets/kremlin-background.png
+ab8a27b817b70bcb05e0668d0c97fe8671062c80e943019197e54413e8e5c022  site/css/features.css
+caea99ae02d829f70f19b4b2cb042b1bf0192a0390ce285b2f8b839b4b92f55d  site/css/identity.css
+589bfb0cc4823c5fd033860a7edc04db64d68ea14c99f34ea258994534c791b1  site/css/materials.css
+452edee2ebc680509af54001f42647de0687776ded71134a530a879fb3141845  site/css/style.css
+d3876878d0d5c23295f34b46573c259d09be3b4306377e981a6234fc3765b0ae  site/css/trial.css
+df0d22d69a3133865f105486fcb100523dadfd9afef86a95327c406f5c16d39c  site/js/api.js
+0eb7371f6d589f2c7133355f8202dddd343560fd362dc1ea1f1ec6c4945c5c1f  site/js/app.js
+1b49db5844550f1a9fa694c2b3ace257f5b770e08ce221284227d0c0bc21acb6  site/js/composition.js
+aadc6ee1e0ad28df428d92df1cc794abbbdb68378092baa7f03367164be385ce  site/js/materials.js
+f8fea4154c0b434f210b08d34c9806f6cf1e49d78140efd10f476a9401645121  site/js/questions.js
+da9d749b77201193f7f112865f429444b93bdb36381e0f4aa953a6e8fcf5a3e4  site/js/structure.js
+0988440ed2b0f9eb352c559611d7ee8c91e1b393ab67daec29ffe45520565b6c  supabase/config.toml
+4398388cc55dad80d3f8bb9574290717bd59687a528e74988da9a8a3e756e9c6  supabase/functions/fso-api/index.ts
+74ea0a6e4d310852bfdf326e89e8e95c0dbdae3f7af2bbea00241e7d995d1e7c  supabase/functions/_shared/domain.mjs
+d91fbd8ee2f4c59e4333d1a49830899345fb3840b0a23f0f08a70f197dd9b349  supabase/functions/_shared/seed.mjs
+0e38ab6500b387a9ce900570398fc4132ea6a5f0aa3d93c61dd8f0e61ab3f66e  tests/article-parts.test.mjs
+a2671203f5bfc3248a516d397c072be06aa5583c87ffe8aa873189090604fefe  tests/composition.test.mjs
+20807a5bfbb3bab6de2f9859da5ecef24fded50f42f7552ab873faf7a5e66c50  tests/domain.test.mjs
+011c1c8893962c4a0229f6c75c4553a086c1ecf9da5a9f2fc2a5e7a6f8c807af  tests/editor-updates.test.mjs
+a6ba3896c13f6f93f18c6f58db8bf0d30f1dcc974b04f242b8c7869a46ec6444  tests/http.test.mjs

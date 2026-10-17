@@ -1,40 +1,28 @@
-# Возврат файлов к версии от 09.10.2026
-
-В пакете — 11 исходных файлов из сохранённого итогового архива от 09.10, до импорта КоАП, УК и внутреннего устава. Содержимое проверено по SHA-256. Это файлы обновления, а не полный сайт: загружайте их поверх существующего проекта с сохранением путей. Ключей, паролей, site/config.js и базы данных здесь нет.
-
-## Постоянный откат через веб-интерфейс GitHub
-
-1. Скачайте и распакуйте архив.
-2. В вашем репозитории переключитесь на main. Если загружали сегодняшние обновления, сначала удалите файл tests/results-instructor.test.mjs: откатываемый API не поддерживает действия, которые проверяет этот новый тест. Откройте файл → меню «…» → Delete file → Commit changes.
-3. Выберите Add file → Upload files. Перетащите папки site, supabase, tests и файл UPDATE-EDITORS.md из архива в корень репозитория. Не загружайте внешнюю папку restore-2026-10-09. RESTORE.md загружать необязательно.
-4. Сохраните коммит в main, например «Restore 2026-10-09 version». Проверьте, что обновились существующие пути site/js/app.js и supabase/functions/_shared/domain.mjs, а не появились копии внутри дополнительной папки.
-5. Дождитесь успешного Actions → Publish FSO Center. При ошибке откройте шаг npm test: на этой версии должно проходить 28 тестов; проверьте, удалён ли новый tests/results-instructor.test.mjs.
-6. Если сегодняшнюю версию fso-api уже разворачивали в Supabase, опубликуйте восстановленную функцию отдельно. Если у вас ещё есть настроенный workflow Deploy FSO API, выполните Actions → Deploy FSO API → Run workflow → main. Это опубликует уже восстановленный domain.mjs из main. Либо используйте Codespaces, как описано ниже.
-7. Обновите сайт Ctrl+F5 и войдите администратором повторно.
-
-Если требуется полностью убрать сегодняшние добавленные файлы, после восстановления и публикации функции можно удалить:
-
-- .github/workflows/deploy-api.yml (после его использования для отката функции);
-- UPDATE-RESULTS.md;
-- UPDATE-RESULTS-FIX.md;
-- UPDATE-SEQUENCE-FIX.md.
-
-Если ранее загружались средства импорта документов, их можно убрать вместе: scripts/reference-import.mjs, scripts/prepare-reference-import.mjs, tests/reference-import.test.mjs и папку imports. Они не нужны итоговой версии от 09.10 до импорта. Их удаление не удаляет уже загруженные материалы из облачной базы.
-
-### Публикация восстановленного API через Codespaces
-
-В существующем Codespace с авторизацией Supabase CLI, после сохранения собственных несвязанных изменений:
-
-```bash
-git pull origin main
-npm test
-npx --yes supabase@latest functions deploy fso-api --project-ref rnkmfpjzmvdnpijpeayw --no-verify-jwt --use-api
-```
-
-Миграция и повторная инициализация базы не нужны. Настройки Supabase и site/config.js не заменяйте. Код не восстанавливает и не очищает облачную базу: импортированные документы, если они были загружены в Supabase, останутся до их отдельного удаления администратором.
-
-## Что делает повторный запуск старого Actions
-
-В Actions можно открыть успешный запуск Publish FSO Center от нужной даты и выбрать Re-run all jobs (GitHub разрешает повторный запуск в течение 30 дней). Он использует тот же commit SHA, что и первоначальный запуск, и может повторно опубликовать старую сборку при разрешении окружения GitHub Pages. Но файлы ветки main не откатываются, а Supabase не обновляется. Следующая публикация main снова применит текущее содержимое ветки. Поэтому для постоянного возврата используйте архив и новый коммит восстановления.
-
-Источник: https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs
+.reference-document { margin-bottom: 20px; }
+.article-part { margin: 14px 0 14px 12px; padding: 8px 16px; border-left: 2px solid var(--gold, #c7a56b); }
+.article-part h5 { margin: 0 0 8px; font-size: 15px; color: var(--gold, #c7a56b); }
+.reference-group { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+.reference-article { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; }
+.reference-article summary { cursor: pointer; padding: 14px; font-weight: 600; }
+.reference-article summary .pill { margin-right: 8px; }
+.article-detail { padding: 0 20px 18px; }
+.article-detail h4 { margin-top: 16px; }
+.instruction-list { padding-left: 28px; margin: 14px 0; }
+.instruction-list li { padding: 5px 0; }
+.instruction-text { margin: 14px 0; }
+.instruction-alert { padding: 16px; margin: 16px 0; border: 1px solid var(--border); border-radius: 8px; }
+.instruction-alert.warning { border-color: var(--warning-border); background: var(--warning-bg); }
+.instruction-alert.info { border-color: var(--info-border); background: var(--info-bg); }
+.instruction-alert.danger { border-color: var(--danger-border); background: var(--danger-bg); }
+.instruction-image { margin: 20px 0; }
+.instruction-image img, .editor-image-preview { max-width: 100%; max-height: 500px; border-radius: 8px; }
+.instruction-divider { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+.editor-group { border: 1px solid var(--border); padding: 18px; border-radius: 10px; margin: 16px 0; display: grid; gap: 12px; }
+.editor-group .material-head { flex-wrap: wrap; }
+.editor-group h4 { margin: 0; }
+.editor-article { padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
+.editor-article summary { cursor: pointer; margin-bottom: 12px; }
+.editor-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.material-editor [data-base] { display: grid; gap: 16px; }
+.modal:has(.material-editor) { max-width: 1050px; width: min(1050px, 96vw); }
+@media(max-width: 500px) { .editor-group { padding: 12px; } .editor-article { padding: 10px; } .editor-group .actions { gap: 5px; } }
