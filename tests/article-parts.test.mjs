@@ -15,8 +15,8 @@ test('article parts persist in order, appear in pinned articles and are searchab
   assert.deepEqual(published.groups[0].articles[0].parts,parts);
   assert.ok(materialSearchText(published).includes('Текст второй части'));
   const html=renderMaterial(published);
-  assert.equal(html.split('Часть 1 — Полномочия').length-1,2);
-  assert.ok(html.includes('Часть 2'));
+  assert.equal(html.split('<h5>1 — Полномочия</h5>').length-1,2);
+  assert.ok(html.includes('<h5>2</h5>'));
   const updated=structuredClone(saved);
   updated.groups[0].articles[0].parts.reverse();
   const reordered=await dispatch(restored,'admin.saveMaterial',updated,admin);
