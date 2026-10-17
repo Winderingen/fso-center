@@ -13,7 +13,7 @@ const content = $('#contentArea');
 const button = (text, action, id = '', cls = 'btn-outline') => `<button class="btn ${cls}" data-action="${action}" data-id="${e(id)}">${text}</button>`;
 const heading = (title, description = '') => `<h2>${title}</h2><p class="subtitle">${description}</p>`;
 const date = value => new Date(value).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-const status = a => a.status === 'in_progress' ? 'В процессе' : `${a.passed ? 'Сдано' : 'Не сдано'}${a.status === 'expired' ? ' · время истекло' : ''}${a.finishedBy === 'admin' ? ' · завершено администратором' : ''}`;
+const status = a => a.status === 'in_progress' ? 'В процессе' : `${a.passed ? 'Сдано' : 'Не сдано'}${a.status === 'expired' ? ' · время истекло' : ''}`;
 function toast(message) { const node = document.createElement('div'); node.className = 'toast'; node.textContent = message; $('#notifications').append(node); setTimeout(() => node.remove(), 5500); }
 let modalDirty = false;
 function requestCloseModal() { if (!modalDirty || confirm("Закрыть окно без сохранения изменений?")) closeModal(); }
@@ -121,7 +121,6 @@ function filteredResults() {
 }
 function renderResults() {
   $('#adminPanel').innerHTML = `<div class="toolbar"><input id="resultSearch" placeholder="ФИО или 123-456" aria-label="Поиск сотрудника"><select id="resultAssessment" aria-label="Экзамен"><option value="">Все экзамены / тесты</option>${[...new Map(adminData.attempts.map(a => [a.assessmentId, a.title])).entries()].map(([id, title]) => `<option value="${e(id)}">${e(title)}</option>`).join('')}</select><select id="resultType" aria-label="Тип"><option value="exam">Экзамены</option><option value="test">Тесты</option><option value="">Все проверки</option></select><select id="resultStatus" aria-label="Статус"><option value="">Все статусы</option><option value="passed">Сдано</option><option value="failed">Не сдано</option><option value="in_progress">В процессе</option></select></div><div class="actions">${button('Обновить', 'reload')}${button('Экспорт CSV', 'export')}</div><div id="resultStats"></div><div id="resultTable"></div>`;
-  if (mode === 'supabase' && adminData.capabilities?.resultManagement !== 2) $('#adminPanel').insertAdjacentHTML('afterbegin', '<p class="note">Для новых действий с результатами обновите серверную функцию Supabase fso-api. GitHub Pages публикует только интерфейс сайта.</p>');
   ['#resultSearch', '#resultAssessment', '#resultType', '#resultStatus'].forEach(id => $(id).addEventListener(id === '#resultSearch' ? 'input' : 'change', updateResults)); updateResults();
 }
 function updateResults() {
@@ -129,28 +128,15 @@ function updateResults() {
   const passed = completed.filter(a => a.passed).length;
   const avg = completed.length ? Math.round(completed.reduce((n, a) => n + a.score, 0) / completed.length) : 0;
   $('#resultStats').innerHTML = `<div class="stat-grid" style="margin:20px 0">${[['Попыток', rows.length], ['Сдано', passed], ['Не сдано', completed.length - passed], ['Средний балл', completed.length ? `${avg}%` : '—']].map(([label, value]) => `<div class="stat-card"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`).join('')}</div>`;
-  $('#resultTable').innerHTML = table(['Сотрудник / удостоверение', 'Проверка', 'Начало', 'Балл', 'Статус', 'Действия'], rows.map(a => [`${e(a.cadet?.fullName || 'Анонимный тест')}<br><span class="muted">${e(a.cadet ? `${a.cadet.rank} · ${a.cadet.certificate}` : 'Без идентификации')}</span>`, e(a.title), date(a.startedAt), a.score === undefined ? '—' : `${a.score}%`, status(a), button('Подробнее', 'detail', a.id) + (a.status === 'in_progress' ? ' ' + button('Завершить', 'finish-attempt', a.id) : '') + ' ' + button(a.status === 'in_progress' ? 'Завершить и удалить' : 'Удалить', 'delete-attempt', a.id)]));
+  $('#resultTable').innerHTML = table(['Сотрудник / удостоверение', 'Проверка', 'Начало', 'Балл', 'Статус', ''], rows.map(a => [`${e(a.cadet?.fullName || 'Анонимный тест')}<br><span class="muted">${e(a.cadet ? `${a.cadet.rank} · ${a.cadet.certificate}` : 'Без идентификации')}</span>`, e(a.title), date(a.startedAt), a.score === undefined ? '—' : `${a.score}%`, status(a), button('Подробнее', 'detail', a.id)]));
 }
 function exportResults() {
   const cell = value => { let s = String(value ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replaceAll('"', '""') + '"'; };
-  const rows = [['ФИО', 'Звание', 'Удостоверение', 'ФИО инструктора', 'Жетон инструктора', 'Экзамен', 'Тип', 'Начало (МСК)', 'Балл', 'Статус'], ...filteredResults().map(a => [a.cadet?.fullName, a.cadet?.rank, a.cadet?.certificate, a.instructor?.fullName, a.instructor?.certificate, a.title, a.type, date(a.startedAt), a.score, status(a)])];
+  const rows = [['ФИО', 'Звание', 'Удостоверение', 'Экзамен', 'Тип', 'Начало (МСК)', 'Балл', 'Статус'], ...filteredResults().map(a => [a.cadet?.fullName, a.cadet?.rank, a.cadet?.certificate, a.title, a.type, date(a.startedAt), a.score, status(a)])];
   const url = URL.createObjectURL(new Blob(['\uFEFF' + rows.map(r => r.map(cell).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a'); link.href = url; link.download = 'fso-results.csv'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 async function saved(action, input) { await api(action, input); closeModal(); await refreshCatalog(); await route(); toast('Изменения сохранены'); }
-async function saveResultAction(action, input) {
-  try { await saved(action, input); }
-  catch (error) {
-    if (/Нельзя удалить эту запись|Неизвестная операция/.test(error.message)) throw new Error('Серверная функция Supabase fso-api не поддерживает это действие. Разверните обновлённую функцию: публикация GitHub Pages не обновляет Supabase.');
-    throw error;
-  }
-}
-function finishResult(id) {
-  const a = adminData.attempts.find(a => a.id === id);
-  if (!a) return toast('Попытка не найдена. Обновите результаты.');
-  modal('Принудительное завершение', form(`<p>Завершить проверку «${e(a.title)}» сотрудника ${e(a.cadet?.fullName || 'Анонимный тест')}?</p><p>Результат будет рассчитан по сохранённым ответам. Вопросы без ответа считаются неверными. Попытка останется в истории, продолжить её будет нельзя.</p>`, 'Завершить и сохранить'));
-  onForm(() => saveResultAction('admin.finishAttempt', { id }));
-}
 function editMaterial(id, section=materialCategory, focus={}) {
   const m = adminData.materials.find(m => m.id === id) || { section, published: false };
   const editorTitle = focus.action ? (focus.action.includes('article') ? 'Статья' : 'Раздел') : id ? 'Редактирование материала' : 'Новый материал';
@@ -172,22 +158,19 @@ function editAssessment(id) {
   mountComposition($('#modalBody'),a,adminData,draft=>saved('admin.saveAssessment',draft),()=>api('admin.generateCode'));
 }
 function deleteItem(collection, id) {
-  const attempt = collection === 'attempts' ? adminData.attempts.find(a => a.id === id) : null;
-  const active = attempt?.status === 'in_progress';
-  const message = attempt ? `<p>Удалить результат проверки «${e(attempt.title)}»?</p><p>${e(attempt.cadet?.fullName || 'Анонимный тест')} · ${date(attempt.startedAt)}</p><p>Попытка, ответы и результат будут удалены без возможности восстановления и исключены из статистики.</p>${active ? '<p class="note">Проверка будет принудительно завершена и удалена. Старой ссылкой сотрудник продолжить её не сможет.</p>' : ''}` : '<p>Удалить выбранную запись? Сохранённые попытки останутся в истории.</p>';
-  modal(attempt ? 'Удаление результата' : 'Удаление записи', form(message, active ? 'Завершить и удалить' : 'Удалить'));
-  onForm(() => collection === 'attempts' ? saveResultAction('admin.delete', { collection, id }) : saved('admin.delete', { collection, id }));
+  modal('Удаление записи', form('<p>Удалить выбранную запись? Сохранённые попытки останутся в истории.</p>', 'Удалить'));
+  onForm(() => saved('admin.delete', { collection, id }));
 }
 function resultDetail(id) {
   const a = adminData.attempts.find(a => a.id === id);
-  modal('Подробности попытки', `<h3>${e(a.title)}</h3><p>${e(a.cadet ? `${a.cadet.rank} · ${a.cadet.fullName} · ${a.cadet.certificate}` : 'Анонимный тест')}</p><p><strong>Инструктор:</strong> ${e(a.instructor?.fullName || 'Не указан')}${a.instructor?.certificate ? ` · жетон ${e(a.instructor.certificate)}` : ''}</p><p class="muted">${date(a.startedAt)} · ${status(a)}</p>${a.status === 'in_progress' ? '<p class="note">Попытка ещё идёт. Обновите результаты после завершения.</p>' : `<p class="score">${a.score}%</p>`}${review(a)}`);
+  modal('Подробности попытки', `<h3>${e(a.title)}</h3><p>${e(a.cadet ? `${a.cadet.rank} · ${a.cadet.fullName} · ${a.cadet.certificate}` : 'Анонимный тест')}</p><p class="muted">${date(a.startedAt)} · ${status(a)}</p>${a.status === 'in_progress' ? '<p class="note">Попытка ещё идёт. Обновите результаты после завершения.</p>' : `<p class="score">${a.score}%</p>`}${review(a)}`);
 }
 function review(a) { return a.questions.map((q, i) => `<div class="review-item"><strong>${i + 1}. ${e(q.text)}</strong>${reviewQuestion(q,a.answers[i])}</div>`).join(''); }
 function start(id) {
   const a = catalog.assessments.find(a => a.id === id);
   let html = `<p class="muted">${e(a.title)} · ${a.timeLimit} мин · ${a.questionCount} вопросов</p>`;
   if (sessionStorage.getItem('fso_attempt')) html += '<div class="note">Новая попытка заменит ссылку на предыдущую в этом браузере. Предыдущая запись останется в системе.</div>';
-  if (a.type === 'exam') html += select('Звание', 'rank', [['', 'Выберите звание'], ...ranks.map(r => [r, r])], '') + field('ФИО игрового персонажа', 'fullName', '', 'text', 'required maxlength="150" autocomplete="off"') + field('Номер удостоверения', 'certificate', '', 'text', 'required pattern="[0-9]{3}-[0-9]{3}" maxlength="7" placeholder="123-456" title="Три цифры, дефис, три цифры"') + '<h4>Инструктор (необязательно)</h4>' + field('ФИО инструктора', 'instructorFullName', '', 'text', 'maxlength="150" autocomplete="off"') + field('Жетон инструктора', 'instructorCertificate', '', 'text', 'pattern="[0-9]{3}-[0-9]{3}" maxlength="7" placeholder="123-456" title="Три цифры, дефис, три цифры"') + field('Кодовое слово', 'code', '', 'password', 'required maxlength="128" autocomplete="off"');
+  if (a.type === 'exam') html += select('Звание', 'rank', [['', 'Выберите звание'], ...ranks.map(r => [r, r])], '') + field('ФИО игрового персонажа', 'fullName', '', 'text', 'required maxlength="150" autocomplete="off"') + field('Номер удостоверения', 'certificate', '', 'text', 'required pattern="[0-9]{3}-[0-9]{3}" maxlength="7" placeholder="123-456" title="Три цифры, дефис, три цифры"') + field('Кодовое слово', 'code', '', 'password', 'required maxlength="128" autocomplete="off"');
   else html += '<p>Тест открыт всем. После завершения вы увидите процент результата.</p>';
   modal(a.type === 'exam' ? 'Допуск к экзамену' : 'Начать тренировочный тест', form(html, 'Начать'));
   onForm(async fd => {
@@ -239,9 +222,8 @@ async function handle(action, id) {
   else if (action === 'edit-material') editMaterial(id);
   else if (action === 'edit-question') editQuestion(id);
   else if (action === 'edit-assessment') editAssessment(id);
-  else if (action.startsWith('delete-')) deleteItem({ 'delete-material': 'materials', 'delete-question': 'questions', 'delete-assessment': 'assessments','delete-category':'categories', 'delete-attempt':'attempts' }[action], id);
+  else if (action.startsWith('delete-')) deleteItem({ 'delete-material': 'materials', 'delete-question': 'questions', 'delete-assessment': 'assessments','delete-category':'categories' }[action], id);
   else if (action === 'detail') resultDetail(id);
-  else if (action === 'finish-attempt') finishResult(id);
   else if (action === 'export') exportResults();
   else if (action === 'start') start(id);
   else if (action === 'question' && !busy) { questionIndex = Number(id); renderAttempt(); }

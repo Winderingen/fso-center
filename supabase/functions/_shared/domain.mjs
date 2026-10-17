@@ -62,7 +62,6 @@ export async function dispatch(state, action, input, ctx) {
   if (action.startsWith('admin.')) {
     if (!ctx.admin) fail('Требуется вход администратора', 401);
     if (action === 'admin.data') return {
-      capabilities: { resultManagement: 2 },
       materials: state.materials, categories: state.categories, questions: state.questions.map(adminQuestion),
       assessments: state.assessments.map(({ accessHash, ...item }) => ({ ...item, hasCode: !!accessHash })),
       attempts: state.attempts.map(a => attemptView(a, true))
@@ -117,20 +116,8 @@ export async function dispatch(state, action, input, ctx) {
       }
       upsert(state.assessments, a); return { id: a.id };
     }
-    if (action === 'admin.finishAttempt') {
-      const attempt = state.attempts.find(a => a.id === input.id);
-      if (!attempt) fail('Попытка не найдена', 404);
-      if (attempt.status === 'in_progress') { finalize(attempt, now); attempt.finishedBy = 'admin'; }
-      return { ok: true, attempt: attemptView(attempt, true) };
-    }
     if (action === 'admin.delete') {
-      if (!['materials', 'questions', 'assessments', 'categories', 'attempts'].includes(input.collection)) fail('Нельзя удалить эту запись');
-      if (input.collection === 'attempts') {
-        const attempt = state.attempts.find(a => a.id === input.id);
-        if (!attempt) fail('Попытка не найдена', 404);
-        // Finalize and remove in the same transaction; the old token cannot resume it.
-        if (attempt.status === 'in_progress') finalize(attempt, now);
-      }
+      if (!['materials', 'questions', 'assessments', 'categories'].includes(input.collection)) fail('Нельзя удалить эту запись');
       if (input.collection === 'categories' && (state.questions.some(q=>q.categoryId===input.id) || state.assessments.some(a=>a.blocks?.some(b=>b.categoryId===input.id)))) fail('Сначала уберите вопросы и проверки из категории');
       if (input.collection === 'questions' && state.assessments.some(a => a.blocks ? a.blocks.some(b => blockPool(state,b).some(q=>q.id===input.id)) : a.questionIds.includes(input.id))) fail('Вопрос используется в тесте или экзамене. Сначала уберите его из состава.');
       state[input.collection] = state[input.collection].filter(item => item.id !== input.id); return { ok: true };
@@ -140,7 +127,7 @@ export async function dispatch(state, action, input, ctx) {
     const a = state.assessments.find(a => a.id === input.assessmentId && a.published);
     if (!a) fail('Проверка недоступна', 404);
     if (!throttle(state, `start:${ctx.client}`, 30, now)) return { error: 'Слишком много запусков. Повторите через 10 минут.', status: 429 };
-    let cadet = null, instructor = null;
+    let cadet = null;
     if (a.type === 'exam') {
       const department = input.department || (a.departments ? '' : 'academy');
       if (!DEPARTMENTS.includes(department) || !(a.departments || DEPARTMENTS).includes(department)) fail('Экзамен недоступен выбранному отделу', 403);
@@ -148,9 +135,6 @@ export async function dispatch(state, action, input, ctx) {
       if (await codeHash(input.code, ctx.pepper) !== a.accessHash) return { error: 'Неверное кодовое слово', status: 403 };
       cadet = { fullName: required(input.fullName, 'ФИО', 150), rank: required(input.rank, 'Звание', 80), certificate: required(input.certificate, 'Номер удостоверения', 30), department };
       if (!/^\d{3}-\d{3}$/.test(cadet.certificate)) fail('Удостоверение должно иметь формат 123-456');
-      const fullName = str(input.instructorFullName, 150), certificate = str(input.instructorCertificate, 30);
-      if (certificate && !/^\d{3}-\d{3}$/.test(certificate)) fail('Жетон инструктора должен иметь формат 123-456');
-      if (fullName || certificate) instructor = { fullName, certificate };
     }
     const pool = a.blocks ? a.blocks.flatMap(b => { const pool = blockPool(state,b); if(pool.length < b.count) fail('Недостаточно вопросов в категории. Обратитесь к администратору.'); return b.mode === 'random' ? shuffle(pool).slice(0,b.count) : pool; }) : shuffle(a.questionIds.map(id => state.questions.find(q => q.id === id)).filter(Boolean)).slice(0,a.questionCount);
     const questions = shuffle(pool).map(q => {
@@ -161,7 +145,7 @@ export async function dispatch(state, action, input, ctx) {
     });
     if (questions.length !== a.questionCount) fail('Недостаточно вопросов. Обратитесь к администратору.');
     const token = crypto.randomUUID() + crypto.randomUUID();
-    const attempt = { id: crypto.randomUUID(), tokenHash: await digest(token), assessmentId: a.id, title: a.title, type: a.type, cadet, instructor, questions: structuredClone(questions), answers: questions.map(() => null), passingScore: a.passingScore, startedAt: now, deadline: now + a.timeLimit * 60000, status: 'in_progress' };
+    const attempt = { id: crypto.randomUUID(), tokenHash: await digest(token), assessmentId: a.id, title: a.title, type: a.type, cadet, questions: structuredClone(questions), answers: questions.map(() => null), passingScore: a.passingScore, startedAt: now, deadline: now + a.timeLimit * 60000, status: 'in_progress' };
     state.attempts.push(attempt); return { token, attempt: attemptView(attempt), serverTime: now };
   }
   if (['attempt.get', 'attempt.answer', 'attempt.finish'].includes(action)) {

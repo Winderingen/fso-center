@@ -1,160 +1,96 @@
-# Восстановление сайта ФСО: согласованная версия от 09.10.2026
+import http from 'node:http';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { dispatch, codeHash, digest, HttpError } from './supabase/functions/_shared/domain.mjs';
+import { seed } from './supabase/functions/_shared/seed.mjs';
 
-Проверка выполнена 17.10.2026. Инструкция предназначена для действующего сайта https://winderingen.github.io/fso-center/ и проекта Supabase rnkmfpjzmvdnpijpeayw. Всё можно сделать через браузер, без установки Git или Node.js на Windows.
-
-## 1. Что означает сообщение на скриншоте
-
-Сообщение «Для новых действий с результатами обновите серверную функцию Supabase fso-api» выводит новая версия site/js/app.js, когда сервер не сообщает поддержку новых операций. Это диагностическое предупреждение интерфейса. Само по себе оно не означает повреждение базы или потерю данных.
-
-При полном возврате к версии 09.10 этой строки в app.js вообще не должно быть. Проверка обнаружила её непосредственно в опубликованном файле, а не только в вашем браузере. Следовательно, объяснить ситуацию одним кэшем нельзя: откат интерфейса ещё не опубликован полностью.
-
-Результаты проверки:
-
-| Компонент | Фактический результат |
-|---|---|
-| Публичный site/js/app.js | Отличается от восстановленной версии; содержит новое предупреждение |
-| Публичный site/js/materials.js | Отличается от восстановленной версии |
-| Публичные questions.js, api.js, materials.css | Совпадают с восстановленными файлами |
-| domain.mjs в ветке main GitHub | Отличается от версии 09.10; содержит сегодняшнее разрешение удаления попыток |
-| Публичный config.js | Режим supabase, правильный проект, публичный ключ присутствует |
-| catalog в действующей fso-api | HTTP 200; на момент проверки возвращает 4 опубликованных материала и 1 опубликованную проверку |
-| admin.data без авторизации | HTTP 401 «Требуется вход администратора» — корректно |
-| Новые workflow deploy-api.yml и тест results-instructor.test.mjs в main | Не найдены, HTTP 404; их сейчас не нужно удалять повторно |
-| Локальная восстановленная версия | Все 28 тестов проходят, включая работу через HTTP и сохранение после перезапуска |
-
-Функция не сообщает номер версии в публичном каталоге. Поэтому по этому ответу нельзя установить точный исходник работающего API или доказать поддержку конкретного административного действия. Авторизованное создание, изменение и удаление записей в действующей Supabase при аудите не выполнялось; содержимое закрытых результатов, секреты и настройки аккаунта не проверялись.
-
-Сайт состоит из трёх отдельных частей: файлы GitHub → публикация GitHub Pages; функция fso-api → отдельная публикация Supabase; данные → существующая таблица fso_state. Обновление одной части не заменяет остальные.
-
-## 2. Что входит в новый архив
-
-Это полный комплект кода для восстановления, а не очередная небольшая заплатка:
-
-- site/ — HTML, JavaScript, CSS, эмблема и фон; **без site/config.js**, чтобы сохранить ваш действующий проект и ключ;
-- supabase/functions/fso-api/index.ts и supabase/functions/_shared/ — согласованная серверная функция;
-- supabase/config.toml — конфигурация уже используемой функции;
-- tests/, package.json, server.mjs и scripts/seed-sql.mjs — код и исходные проверки проекта;
-- .github/workflows/pages.yml — прежняя публикация интерфейса;
-- .github/workflows/recover-api.yml — отдельный вспомогательный ручной workflow для публикации восстановленной функции; он не добавляет возможностей в сам сайт;
-- SHA256SUMS.txt — контрольные суммы файлов;
-- эта инструкция.
-
-Основные изменявшиеся файлы восстановлены из сохранённого архива от 09.10 и сверены с ним. Изображения и прочие не изменявшиеся файлы добавлены из существующего проекта. База, её копии, site/config.js, токены, пароли и SQL начального наполнения в архив не включены.
-
-## 3. Сохранить существующие настройки и данные
-
-1. В GitHub откройте site/config.js и сохраните его копию у себя. При дальнейшей загрузке его не заменяйте.
-2. На странице репозитория Code → Download ZIP сохраните копию текущих исходников.
-3. В Supabase SQL Editor выполните только читающий запрос:
-
-```sql
-select id, version, data
-from public.fso_state
-where id = 1;
-```
-
-Скачайте результат через Export/Download CSV. Это копия всей записи с материалами, вопросами и результатами; храните её приватно, не загружайте в публичный GitHub. Запрос не меняет таблицу.
-
-Не запускайте начальную миграцию, seed.sql, npm run seed:sql, SQL удаления таблиц или очистки данных. База уже работает. Не меняйте FSO_CODE_PEPPER: существующие кодовые слова сверяются с хешами, вычисленными с этим секретом. Для восстановления не нужны новые проект Supabase или пользователь администратора.
-
-## 4. Восстановить файлы GitHub в одной версии
-
-1. Распакуйте fso-complete-recovery-2026-10-09.zip в новую папку на компьютере.
-2. Откройте https://github.com/Winderingen/fso-center и выберите ветку main.
-3. Если файл tests/results-instructor.test.mjs снова появился после другого обновления, удалите его через «…» → Delete file → Commit changes. В проверенном репозитории его сейчас нет. То же касается tests/reference-import.test.mjs, если вы уже удалили скрипты импорта, а сам тест остался.
-4. На **главной странице репозитория**, где видны site, supabase и package.json, выберите Add file → Upload files.
-5. Перетащите из распакованного комплекта папки site, supabase, tests, scripts, а также package.json, server.mjs, README.md и UPDATE-EDITORS.md. Внешнюю папку recovery-2026-10-09 не загружайте. Не загружайте сам ZIP вместо файлов. site/config.js отсутствует в архиве, ваш файл останется на месте.
-6. Проверьте список путей перед сохранением: должны быть site/js/app.js и supabase/functions/_shared/domain.mjs. Если указано recovery-2026-10-09/site/js/app.js или site/site/js/app.js, отмените эту загрузку и вернитесь в корень репозитория.
-7. Сохраните изменения в main с сообщением «Restore consistent 09 Oct version». Если GitHub требует отдельную ветку, создайте её, затем Pull Request и выполните Merge в main: публикация настроена на main.
-8. Отдельно восстановите .github/workflows/pages.yml из архива, если он отличается. Удобно открыть существующий файл → Edit → вставить весь текст исходного файла → Commit changes.
-9. Проверьте main/site/js/app.js: найдите строку «Для новых действий с результатами». Её не должно быть. Восстановленный интерфейс также не содержит кнопок удаления результатов или полей инструктора: это ожидаемое поведение версии 09.10.
-
-## 5. Опубликовать GitHub Pages
-
-1. В репозитории Settings → Pages убедитесь, что Source — GitHub Actions.
-2. Откройте Actions → Publish FSO Center и выберите запуск **нового коммита восстановления**. Дождитесь зелёного результата.
-3. Если автоматического запуска нет: Publish FSO Center → Run workflow → main.
-4. На шаге npm test ожидаются 28 успешных тестов. Если падает tests/results-instructor.test.mjs, этот новый тест ещё остался в main — удалите его. Если не найден импорт scripts/reference-import.mjs, удалите оставшийся tests/reference-import.test.mjs либо сохраните сам инструмент импорта целиком; он не нужен версии без импорта.
-5. Откройте https://winderingen.github.io/fso-center/js/app.js и через поиск браузера убедитесь, что «Для новых действий с результатами» отсутствует. Если строка есть, сначала перепроверьте файл main/site/js/app.js и SHA нового запуска Actions. Проблема ещё в публикации файлов; бессмысленно пытаться исправить это изменением базы.
-
-Повторный запуск старого Actions не меняет main. Для устойчивого возврата нужен новый коммит с восстановленными исходниками и запуск публикации именно этого коммита.
-
-## 6. Опубликовать восстановленную fso-api через браузер
-
-В проверенном репозитории нет workflow Deploy FSO API. Поэтому инструкция «нажать его» сейчас не сработает. В этом пакете предусмотрен отдельный Recover FSO API 09 Oct.
-
-1. В репозитории Add file → Create new file создайте путь `.github/workflows/recover-api.yml`.
-2. Откройте одноимённый файл из архива обычным текстовым редактором, скопируйте весь текст и вставьте в GitHub. Сохраните в main. Это также подходит, если папка .github не видна в проводнике.
-3. В Supabase откройте настройки **аккаунта** → Access Tokens, создайте токен с доступом к нужному проекту.
-4. В GitHub Settings → Secrets and variables → Actions → Secrets → New repository secret создайте `SUPABASE_ACCESS_TOKEN`. В значение вставьте токен. Не сохраняйте его в исходниках или config.js.
-5. На вкладке Variables создайте repository variable `SUPABASE_PROJECT_REF`, значение `rnkmfpjzmvdnpijpeayw`.
-6. Откройте Actions → Recover FSO API 09 Oct → Run workflow, выберите main и подтвердите запуск.
-7. Дождитесь зелёных шагов Check restored source, npm test и Publish restored Supabase function. Первый шаг специально откажется публиковать функцию, если в app.js ещё присутствует новое предупреждение: сначала нужно завершить шаг 4 этой инструкции.
-8. Последний шаг разворачивает только fso-api с параметрами --no-verify-jwt --use-api; Docker и локальные программы на Windows не нужны. Секреты функции и данные таблицы он не пересоздаёт.
-
-Если уже есть настроенный Codespace и авторизация Supabase CLI, вместо нового workflow можно выполнить в терминале браузерного Codespace после сохранения своих несвязанных правок:
-
-```bash
-git pull origin main
-npm test
-npx --yes supabase@latest functions deploy fso-api --project-ref rnkmfpjzmvdnpijpeayw --no-verify-jwt --use-api
-```
-
-Открытый каталог и тренировочные тесты должны работать без пользовательского JWT. Поэтому функция размещается с --no-verify-jwt; административные действия всё равно отдельно проверяются внутри кода через Supabase Auth. Не заменяйте fso-api новым шаблоном из Dashboard и не вставляйте domain.mjs вместо её index.ts: здесь два разных исходных файла с относительным импортом.
-
-## 7. Проверить настройки, только если после публикации остаётся ошибка
-
-Ваш опубликованный config.js на момент аудита уже корректно указывает Supabase. Сохраняйте его без изменений. Ожидаемая форма:
-
-```js
-window.FSO_CONFIG = {
-  mode: 'supabase',
-  supabaseUrl: 'https://rnkmfpjzmvdnpijpeayw.supabase.co',
-  publishableKey: 'ВАШ_УЖЕ_ДЕЙСТВУЮЩИЙ_ПУБЛИЧНЫЙ_КЛЮЧ'
-};
-```
-
-Это пример формы, не готовая замена: не вставляйте текст-заглушку вместо своего ключа. В config.js должен быть только publishable/anon ключ, не service_role/secret и не токен доступа CLI.
-
-В Supabase Edge Functions → Secrets проверьте наличие прежних значений:
-
-| Имя | Что должно быть |
-|---|---|
-| FSO_SITE_ORIGIN | https://winderingen.github.io — без /fso-center и без конечного слеша |
-| FSO_ADMIN_UID | UUID существующего пользователя администратора в Authentication |
-| FSO_ADMIN_EMAIL | Email того же пользователя |
-| FSO_ADMIN_LOGIN | Имя входа, которое вы используете на сайте |
-| FSO_CODE_PEPPER | Прежний секрет, не новый |
-
-SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY используются внутри Edge Function; их не нужно копировать в сайт. Секреты действующего проекта при аудите не читались, их значения не следует угадывать или массово менять.
-
-## 8. Проверить результат восстановления
-
-1. Закройте старую вкладку сайта. Откройте новую и выполните Ctrl+F5.
-2. Откройте справочник без входа: опубликованные материалы должны загружаться.
-3. Войдите своим **облачным** логином и паролем администратора. Локальные admin/FsoDemo2026! не являются автоматически реквизитами Supabase.
-4. Предупреждение со скриншота должно исчезнуть. Его отсутствие в версии 09.10 не является подтверждением новой версии API: здесь эта проверка просто не предусмотрена.
-5. Проверьте существующие материалы и статистику. Создайте в тестовой категории вопрос «Порядок действий» с 2–3 шагами. Он должен сохраняться; при запуске проверки порядок должен перемешиваться. Если функция после шага 6 всё ещё отвечает «Неизвестный тип вопроса», перепроверьте project ref, последний успешный запуск Recover FSO API 09 Oct и наличие 'sequence' в main/supabase/functions/_shared/domain.mjs.
-6. Проверьте вход в уже существующий экзамен по его действующему кодовому слову и удостоверению 123-456. Делайте это только если нужна реальная пробная запись: в версии 09.10 кнопки удаления результатов нет.
-7. Импортированные документы из облачной базы автоматически не исчезнут от замены исходников. Этот пакет содержит код, не данные. Если документы ранее были загружены в Supabase, управляйте ими отдельно через кабинет администратора; не очищайте всю fso_state ради удаления нескольких документов.
-
-## 9. Если возникнет конкретная ошибка
-
-| Симптом | Что проверить |
-|---|---|
-| После восстановления всё ещё виден жёлтый текст | Опубликованный js/app.js содержит новый код; проверьте путь загрузки, main и новый запуск Pages. Затем обновите кэш |
-| «Неизвестный тип вопроса» для последовательности | Серверная функция не соответствует редактору либо развернулась в другой проект. Перепубликуйте восстановленную fso-api из этого пакета |
-| «Нельзя удалить эту запись» при попытке удалить результат | В версии 09.10 удаление результатов не поддерживается. Если кнопка ещё видна, интерфейс не откатился |
-| npm test завершается ошибкой | Откройте именно лог шага npm test; уберите сегодняшний results-instructor.test.mjs и проверьте, что тесты и код из одного архива |
-| Workflow восстановления не появился | recover-api.yml должен быть в .github/workflows на main, не в папке распакованного архива |
-| Workflow просит токен или project ref | Проверьте имя repository secret и имя repository variable из шага 6 |
-| CLI сообщает Unauthorized / Forbidden | Проверьте токен аккаунта Supabase, его срок действия и доступ к проекту. Это не пароль пользователя базы или сайта |
-| HTTP 401 «Invalid JWT» или Missing authorization header на публичном каталоге | Проверьте, что восстановленная функция опубликована с --no-verify-jwt |
-| HTTP 401 «Требуется вход администратора» в кабинете | Выйдите и войдите повторно; проверьте прежний UID администратора при повторяющемся отказе |
-| «Недопустимый источник запроса» | Проверьте FSO_SITE_ORIGIN: только https://winderingen.github.io |
-| «Ошибка сервера. Проверьте конфигурацию» | Откройте логи fso-api в Supabase: проверьте секреты, наличие fso_state id=1 и fso_commit. Не пересоздавайте таблицу без установленной причины |
-| На GitHub Pages показан README | Settings → Pages → Source должен быть GitHub Actions, а workflow должен публиковать папку site |
-
-Если ошибка останется, сохраните название упавшего шага Actions и его полный текст ошибки либо HTTP-статус и JSON ошибки fso-api. Не отправляйте пароли, токены, Authorization headers или полный экспорт базы.
-
-Официальные инструкции: [загрузка файлов GitHub](https://docs.github.com/en/repositories/working-with-files/managing-files/adding-a-file-to-a-repository), [публикация функций Supabase](https://supabase.com/docs/guides/functions/deploy), [параметры CLI --use-api и --no-verify-jwt](https://supabase.com/docs/reference/cli/supabase-functions-deploy).
+const root = path.dirname(fileURLToPath(import.meta.url));
+const runtime = process.env.FSO_DATA_DIR || path.join(root, '.runtime');
+const dbFile = path.join(runtime, 'database.sqlite');
+await mkdir(runtime, { recursive: true });
+const database = new DatabaseSync(dbFile);
+database.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS fso_state (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)');
+let state, settings;
+try { settings = JSON.parse(await readFile(path.join(runtime, 'settings.json'), 'utf8')); }
+catch (e) {
+  if (e.code !== 'ENOENT') throw e;
+  const salt = randomBytes(16).toString('hex');
+  settings = { pepper: randomBytes(32).toString('hex'), login: process.env.FSO_ADMIN_LOGIN || 'admin', salt, hash: scryptSync(process.env.FSO_ADMIN_PASSWORD || 'FsoDemo2026!', salt, 64).toString('hex') };
+  await writeFile(path.join(runtime, 'settings.json'), JSON.stringify(settings), { mode: 0o600 });
+}
+const storedState = database.prepare('SELECT data FROM fso_state WHERE id=1').get();
+if (storedState) state = JSON.parse(storedState.data);
+else {
+  // Preserve data if upgrading an earlier local JSON trial.
+  try { state = JSON.parse(await readFile(path.join(runtime, 'database.json'), 'utf8')); }
+  catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+    state = seed(); state.assessments.find(a => a.type === 'exam').accessHash = await codeHash('АКАДЕМИЯ', settings.pepper);
+  }
+  database.prepare('INSERT INTO fso_state(id,data) VALUES(1,?)').run(JSON.stringify(state));
+}
+const sessions = new Map();
+const loginAttempts = new Map();
+let queue = Promise.resolve();
+async function transaction(action, input, ctx) {
+  const task = queue.then(async () => {
+    const draft = structuredClone(state);
+    const result = await dispatch(draft, action, input, ctx);
+    database.prepare('UPDATE fso_state SET data=? WHERE id=1').run(JSON.stringify(draft));
+    state = draft; return result;
+  });
+  queue = task.catch(() => {}); return task;
+}
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp' };
+function json(res, status, data) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); }
+const port = Number(process.env.PORT || 4173);
+const server = http.createServer(async (req, res) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  try {
+    const url = new URL(req.url, `http://127.0.0.1:${port}`);
+    if (url.pathname === '/api') {
+      if (req.method !== 'POST') return json(res, 405, { error: 'Метод не поддерживается' });
+      const actualPort = server.address().port;
+      if (req.headers.origin && ![`http://127.0.0.1:${actualPort}`, `http://localhost:${actualPort}`].includes(req.headers.origin)) return json(res, 403, { error: 'Недопустимый источник запроса' });
+      if (!req.headers['content-type']?.startsWith('application/json')) throw new HttpError(415, 'Ожидается JSON');
+      // Decode once: a UTF-8 character may span two incoming network chunks.
+      const bodyChunks = []; let bodyBytes = 0;
+      for await (const chunk of req) { bodyBytes += chunk.length; if (bodyBytes > 2000000) throw new HttpError(413, 'Слишком большой запрос (максимум 2 МБ)'); bodyChunks.push(chunk); }
+      const body = Buffer.concat(bodyChunks).toString('utf8');
+      let payload; try { payload = JSON.parse(body); } catch { throw new HttpError(400, 'Некорректный JSON'); }
+      const { action, input = {} } = payload;
+      if (typeof action !== 'string' || !input || typeof input !== 'object') throw new HttpError(400, 'Некорректный запрос');
+      const bearer = req.headers.authorization?.replace(/^Bearer /, '');
+      for (const [key, expiry] of sessions) if (Date.now() >= expiry) sessions.delete(key);
+      if (action === 'auth.login') {
+        const key = req.socket.remoteAddress;
+        const bucket = loginAttempts.get(key);
+        const current = bucket && Date.now() - bucket.since < 600000 ? bucket : { since: Date.now(), count: 0 };
+        current.count++; loginAttempts.set(key, current);
+        if (current.count > 10) return json(res, 429, { error: 'Слишком много попыток входа. Повторите через 10 минут.' });
+        const pass = typeof input.password === 'string' ? input.password : '';
+        const valid = input.username === settings.login && timingSafeEqual(scryptSync(pass.slice(0, 500), settings.salt, 64), Buffer.from(settings.hash, 'hex'));
+        if (!valid) return json(res, 401, { error: 'Неверное имя пользователя или пароль' });
+        const token = randomBytes(32).toString('hex'); sessions.set(token, Date.now() + 8 * 3600000);
+        return json(res, 200, { token, username: settings.login });
+      }
+      if (action === 'auth.logout') { sessions.delete(bearer); return json(res, 200, { ok: true }); }
+      const result = await transaction(action, input, { admin: sessions.has(bearer), pepper: settings.pepper, client: await digest(req.socket.remoteAddress || '') });
+      return json(res, result.status || 200, result);
+    }
+    if (!['GET', 'HEAD'].includes(req.method)) return json(res, 405, { error: 'Метод не поддерживается' });
+    const relative = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+    const staticRoot = path.join(root, 'site');
+    const target = path.resolve(staticRoot, '.' + relative);
+    if (!target.startsWith(staticRoot + path.sep)) return json(res, 403, { error: 'Доступ запрещён' });
+    const data = await readFile(target);
+    res.writeHead(200, { 'Content-Type': mime[path.extname(target)] || 'application/octet-stream', 'Cache-Control': 'no-cache' }); res.end(req.method === 'HEAD' ? undefined : data);
+  } catch (e) { json(res, e.status || (e.code === 'ENOENT' ? 404 : 500), { error: e.status ? e.message : e.code === 'ENOENT' ? 'Не найдено' : 'Ошибка сервера' }); }
+});
+server.listen(port, '127.0.0.1', () => console.log(`FSO Center: http://127.0.0.1:${server.address().port}\nLocal trial mode. Database: .runtime/database.sqlite`));
+function shutdown() { server.close(() => { database.close(); process.exit(0); }); }
+process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
