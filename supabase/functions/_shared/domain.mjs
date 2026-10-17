@@ -62,6 +62,7 @@ export async function dispatch(state, action, input, ctx) {
   if (action.startsWith('admin.')) {
     if (!ctx.admin) fail('Требуется вход администратора', 401);
     if (action === 'admin.data') return {
+      capabilities: { resultManagement: 2 },
       materials: state.materials, categories: state.categories, questions: state.questions.map(adminQuestion),
       assessments: state.assessments.map(({ accessHash, ...item }) => ({ ...item, hasCode: !!accessHash })),
       attempts: state.attempts.map(a => attemptView(a, true))
@@ -116,8 +117,20 @@ export async function dispatch(state, action, input, ctx) {
       }
       upsert(state.assessments, a); return { id: a.id };
     }
+    if (action === 'admin.finishAttempt') {
+      const attempt = state.attempts.find(a => a.id === input.id);
+      if (!attempt) fail('Попытка не найдена', 404);
+      if (attempt.status === 'in_progress') { finalize(attempt, now); attempt.finishedBy = 'admin'; }
+      return { ok: true, attempt: attemptView(attempt, true) };
+    }
     if (action === 'admin.delete') {
       if (!['materials', 'questions', 'assessments', 'categories', 'attempts'].includes(input.collection)) fail('Нельзя удалить эту запись');
+      if (input.collection === 'attempts') {
+        const attempt = state.attempts.find(a => a.id === input.id);
+        if (!attempt) fail('Попытка не найдена', 404);
+        // Finalize and remove in the same transaction; the old token cannot resume it.
+        if (attempt.status === 'in_progress') finalize(attempt, now);
+      }
       if (input.collection === 'categories' && (state.questions.some(q=>q.categoryId===input.id) || state.assessments.some(a=>a.blocks?.some(b=>b.categoryId===input.id)))) fail('Сначала уберите вопросы и проверки из категории');
       if (input.collection === 'questions' && state.assessments.some(a => a.blocks ? a.blocks.some(b => blockPool(state,b).some(q=>q.id===input.id)) : a.questionIds.includes(input.id))) fail('Вопрос используется в тесте или экзамене. Сначала уберите его из состава.');
       state[input.collection] = state[input.collection].filter(item => item.id !== input.id); return { ok: true };

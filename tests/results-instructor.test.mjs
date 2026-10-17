@@ -36,3 +36,29 @@ test('only admin can delete a result; other results, questions and exams stay in
   await assert.rejects(dispatch(state,'attempt.answer',{id:other.attempt.id,token:other.token,index:0,answer:0},ctx),e=>e.status===404);
   assert.equal((await dispatch(state,'admin.data',{},admin)).attempts.length,0);
 });
+test('admin can finalize an abandoned exam using saved answers and cannot change its result afterward',async()=>{
+  const state=await setup();const started=await dispatch(state,'attempt.start',input,ctx);
+  const stored=state.attempts[0];
+  await dispatch(state,'attempt.answer',{id:started.attempt.id,token:started.token,index:0,answer:stored.questions[0].correct},ctx);
+  await assert.rejects(dispatch(state,'admin.finishAttempt',{id:started.attempt.id},ctx),e=>e.status===401);
+  const result=await dispatch(state,'admin.finishAttempt',{id:started.attempt.id},{...admin,now:ctx.now+9000});
+  assert.equal(result.attempt.status,'completed'); assert.equal(result.attempt.finishedBy,'admin');
+  assert.equal(result.attempt.correct,1);assert.equal(result.attempt.score,33);assert.equal(result.attempt.timeSpent,9);
+  assert.equal(state.attempts.length,1);
+  const finishedAt=result.attempt.finishedAt;
+  await dispatch(state,'attempt.answer',{id:started.attempt.id,token:started.token,index:1,answer:stored.questions[1].correct},ctx);
+  await dispatch(state,'admin.finishAttempt',{id:started.attempt.id},{...admin,now:ctx.now+12000});
+  assert.equal(stored.correct,1);assert.equal(stored.finishedAt,finishedAt);
+  const publicResult=await dispatch(state,'attempt.get',{id:started.attempt.id,token:started.token},ctx);
+  assert.equal(publicResult.attempt.score,33);assert.equal(publicResult.attempt.questions,undefined);
+  assert.equal((await dispatch(state,'admin.data',{},admin)).capabilities.resultManagement,2);
+});
+test('deletion finalizes an active exam atomically and leaves other attempts untouched',async()=>{
+  const state=await setup();const started=await dispatch(state,'attempt.start',input,ctx);
+  const other=await dispatch(state,'attempt.start',input,ctx);
+  const removed=state.attempts[0];
+  await dispatch(state,'admin.delete',{collection:'attempts',id:started.attempt.id},admin);
+  assert.equal(removed.status,'completed');assert.equal(removed.score,0);
+  assert.deepEqual(state.attempts.map(a=>a.id),[other.attempt.id]);
+  await assert.rejects(dispatch(state,'admin.delete',{collection:'attempts',id:'missing'},admin),e=>e.status===404);
+});
